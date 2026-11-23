@@ -152,7 +152,7 @@ class TestServer(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         study = {"study_id": "test", "output_root": self.tmp.name, "assets_root": str(ASSETS)}
-        self.specs = {"s": spec(name="s", n_draw=4, n_attention=1, attention_pass=1)}
+        self.specs = {"s": spec(name="s", n_draw=4, n_attention=1, attention_pass=1, completion_code="CODE1")}
         self.chain = ChainStudy(study, self.specs)
         self.app = Flask(__name__)
         self.app.secret_key = "test"
@@ -203,7 +203,17 @@ class TestServer(unittest.TestCase):
             side = "right" if t["trial"]["i_trial"] % 2 else "left"
             promised = t["next"][side]
             t = self.client.post("/chain/choose", json={"i_trial": t["trial"]["i_trial"], "side": side, "rt_ms": 1}).get_json()
-            self.assertEqual(t["trial"], promised)              # None once the session is done
+            if t["done"]:
+                self.assertIsNone(promised)
+            else:
+                self.assertEqual(t["trial"], promised)
+
+    def test_completion_code_only_when_done(self):
+        self.login("u4--spec=s--chain=1")
+        t = self.client.get("/chain/next").get_json()
+        self.assertNotIn("completion_code", t)
+        self.run_session("u4--spec=s--chain=1")
+        self.assertEqual(self.client.get("/chain/next").get_json(), {"done": True, "completion_code": "CODE1"})
 
     def test_bad_input_and_stale_answer(self):
         self.login("u1--spec=s--chain=1")

@@ -18,6 +18,10 @@ python run.py                              # reads sessions.yaml; serves on 127.
 
 Do not use `potato start`: it would not add the `/chain/*` routes.
 
+- **The participant's view**: the question stays on screen, the two options swap in place after each
+  click, a progress bar runs underneath. The last screen thanks them, shows the spec's
+  `completion_code` and says the submission will be approved manually; that screen is the end
+  of the study (Potato's own annotation page is never reached).
 - **Participant URL** (one URL = one session):
   `http://127.0.0.1:8100/?sid=<user_id>--spec=<spec>--chain=<k>`,
   e.g. `?sid=u1--spec=dummy_envy--chain=1`. `user_id` uses letters, digits, `_` and single `-`.
@@ -33,7 +37,7 @@ Do not use `potato start`: it would not add the `/chain/*` routes.
 | Path | Purpose |
 |---|---|
 | `sessions.yaml` | Study variables (`study_id`, paths, host, port) and the session **specs** |
-| `config.yaml` | Potato config: URL login on `sid`, phases `chain` (jsPsych) → closing page |
+| `config.yaml` | Potato config: URL login on `sid`, the `chain` jsPsych phase (+ an unreachable placeholder annotation phase Potato requires) |
 | `run.py` | Starts Potato (`create_app`) with the chain blueprint |
 | `chain_core.py` | Specs, asset loading/checks, session id, one session's trials (no Flask) |
 | `chain_server.py` | `/chain/next`, `/chain/choose`, `/chain/admin`, storage |
@@ -42,7 +46,7 @@ Do not use `potato start`: it would not add the `/chain/*` routes.
 | `proposal/graph/uniform_neighbor.py` | $x^*$ uniform over the neighbours of $x$ |
 | `proposal/parametric/` | Reserved for future proposals |
 | `export.py` | Merge all sessions into CSVs |
-| `data/closing.jsonl` | The single item of the closing page |
+| `data/closing.jsonl` | Placeholder item for the required annotation phase |
 | `assets/stimuli/<stimuli_name>/` | `stimuli.csv`, `<graph_name>.json` (networkx node-link), `attention_checks.csv` |
 
 ## A spec
@@ -58,6 +62,7 @@ specs:
     question: Pick the sentence that ...
     n_attention: 3                         # attention item k goes after draw floor(k*n_draw/(K+1))
     attention_pass: 3
+    completion_code: DUMMY123              # shown on the last screen; empty = none
 ```
 
 Everything is loaded and checked at boot, so a bad spec stops the server before anyone arrives.

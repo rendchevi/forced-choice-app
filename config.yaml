@@ -1,4 +1,6 @@
-# Potato config: the study shell around the chain (login, the jsPsych chain page, a closing page).
+# Potato config: the study shell around the chain (URL login and the jsPsych chain page).
+# The chain page's last screen (thank you + completion code) ends the study, so participants never
+# reach the annotation phase below. Potato refuses a config without one, hence the placeholder item.
 # Start it with `python run.py`, not `potato start`: run.py adds the /chain/* routes.
 annotation_task_name: Forced-choice chain (prototype 1)
 task_dir: .

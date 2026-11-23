@@ -17,3 +17,4 @@ specs:
     question: Pick the sentence that you think expresses a higher degree of envious emotion than any other emotion.
     n_attention: 3
     attention_pass: 3
+    completion_code: DUMMY123        # Prolific completion code shown at the end

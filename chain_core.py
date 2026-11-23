@@ -53,6 +53,7 @@ class Spec:
     n_attention: int
     attention_pass: int
     propose_params: dict = field(default_factory=dict)
+    completion_code: str = ""      # shown on the last screen (Prolific); empty = none
 
 
 def load_study(path):

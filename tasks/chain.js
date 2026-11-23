@@ -6,9 +6,9 @@
 // also sends the trial each side leads to ("next"), so the next pair is shown the moment the
 // participant clicks and the answer is sent in the background.
 // A reload restarts this timeline, and /chain/next resumes the session where it was.
+// The last screen (thank you + completion code) is the end of the study: the jsPsych trial is
+// never finished on purpose, so Potato never moves the participant on to its own pages.
 window.potatoTimeline = function (jsPsych, potato) {
-  var failed = null;   // set when the server could not be reached
-
   function esc(s) {
     var d = document.createElement('div');
     d.textContent = s;
@@ -41,7 +41,12 @@ window.potatoTimeline = function (jsPsych, potato) {
     'border-radius:6px;cursor:pointer}' +
     '.chain-opt:hover{border-color:#666;background:#fafafa}' +
     '.chain-opt:focus{outline:none}.chain-opt:focus-visible{outline:3px solid #93c5fd}' +
-    '.chain-progress{color:#888;font-size:clamp(13px,1vw,20px);margin-top:2.4vw}' +
+    '.chain-bar{height:max(6px,0.45vw);background:#e5e5e5;border-radius:99px;overflow:hidden;margin-top:2.6vw}' +
+    '.chain-bar>div{height:100%;width:0;background:#6b5ccf;transition:width 200ms ease-out}' +
+    '.chain-end{font-size:clamp(18px,1.5vw,32px);line-height:1.6;max-width:60vw;margin:0 auto}' +
+    '.chain-end h2{font-size:1.3em;margin:0 0 1em}' +
+    '.chain-code{display:inline-block;font:600 1.3em/1.4 ui-monospace,monospace;letter-spacing:.05em;' +
+    'padding:.3em .9em;margin:.3em 0 1em;border:2px dashed #6b5ccf;border-radius:6px;user-select:all}' +
     '.chain-fade{animation:chain-fade 120ms ease-out}' +
     '@keyframes chain-fade{from{opacity:0}to{opacity:1}}';
   document.head.appendChild(style);
@@ -55,10 +60,10 @@ window.potatoTimeline = function (jsPsych, potato) {
         '<div class="chain"><p class="chain-q"></p><div class="chain-pair">' +
         '<button type="button" class="chain-opt" data-side="left"></button>' +
         '<button type="button" class="chain-opt" data-side="right"></button>' +
-        '</div><p class="chain-progress"></p></div>';
+        '</div><div class="chain-bar" role="progressbar" aria-label="Progress"><div></div></div></div>';
       var question = root.querySelector('.chain-q');
       var pair = root.querySelector('.chain-pair');
-      var progress = root.querySelector('.chain-progress');
+      var bar = root.querySelector('.chain-bar');
       var button = {left: root.querySelector('[data-side=left]'), right: root.querySelector('[data-side=right]')};
 
       var nTrials = 0;
@@ -68,18 +73,28 @@ window.potatoTimeline = function (jsPsych, potato) {
       var queued = null;    // a click that came before the prefetch: [side, rt]
       var ended = false;
 
-      function finish(err) {
-        if (ended) { return; }
+      function finish(reply) {          // the study's last screen
         ended = true;
-        if (err) { failed = String(err); }
-        done(err ? {chain_error: failed} : {});
+        root.innerHTML = '<div class="chain-end"><h2>Thank you for your participation!</h2>' +
+          (reply.completion_code
+            ? '<p>Your Prolific completion code is:</p><div class="chain-code">' + esc(reply.completion_code) + '</div>'
+            : '') +
+          '<p>Your submission will be manually approved by the researcher, ' +
+          'who will check it as soon as possible.</p></div>';
+      }
+
+      function fail(err) {
+        ended = true;
+        root.innerHTML = '<div class="chain-end"><p>Connection problem (' + esc(String(err)) + ').</p>' +
+          '<p>Please reload this page; you will continue where you left off.</p></div>';
       }
 
       function show(t) {
         shown = t;
         button.left.textContent = t.left;
         button.right.textContent = t.right;
-        progress.textContent = (t.i_trial + 1) + ' / ' + nTrials;
+        bar.firstChild.style.width = (100 * t.i_trial / nTrials) + '%';
+        bar.setAttribute('aria-valuenow', Math.round(100 * t.i_trial / nTrials));
         pair.style.visibility = '';
         pair.classList.remove('chain-fade');
         void pair.offsetWidth;            // restart the fade
@@ -89,9 +104,9 @@ window.potatoTimeline = function (jsPsych, potato) {
       }
 
       function sync(reply) {              // adopt the server's state as it is
+        if (reply.done) { finish(reply); return; }
         nTrials = reply.n_trials;
         question.textContent = reply.question;
-        if (reply.done) { finish(); return; }
         show(reply.trial);
         nextFor = reply.next;
       }
@@ -101,12 +116,12 @@ window.potatoTimeline = function (jsPsych, potato) {
         var i = shown.i_trial;
         var next = nextFor[side];
         nextFor = null;
-        if (next) { show(next); } else { pair.style.visibility = 'hidden'; }
+        if (next) { show(next); } else { pair.style.visibility = 'hidden'; bar.firstChild.style.width = '100%'; }
         call('POST', '/chain/choose', {i_trial: i, side: side, rt_ms: rt}).then(function (reply) {
           if (reply.stale || reply.done || !next || reply.trial.i_trial !== next.i_trial) { sync(reply); return; }
           nextFor = reply.next;
           if (queued) { var q = queued; queued = null; answer(q[0], q[1]); }
-        }).catch(finish);
+        }).catch(fail);
       }
 
       ['left', 'right'].forEach(function (side) {
@@ -116,19 +131,9 @@ window.potatoTimeline = function (jsPsych, potato) {
         });
       });
 
-      call('GET', '/chain/next').then(sync).catch(finish);
+      call('GET', '/chain/next').then(sync).catch(fail);
     }
   };
 
-  var end = {
-    type: jsPsychHtmlButtonResponse,
-    stimulus: function () {
-      return failed
-        ? '<p>Connection problem (' + esc(failed) + '). Please reload this page; you will continue where you left off.</p>'
-        : '<p>All choices are done. Thank you!</p>';
-    },
-    choices: function () { return failed ? [] : ['Continue']; }
-  };
-
-  return [chain, end];
+  return [chain];
 };

@@ -91,7 +91,9 @@ class ChainStudy:
     def payload(self, s: Session):
         """The trial on screen plus, for each side, the trial it leads to (None = the session ends)."""
         brief = lambda t: None if t is None else {"i_trial": t["i_trial"], "left": t["left_text"], "right": t["right_text"]}
-        return {"done": s.done, "n_trials": s.n_trials, "question": s.spec.question,
+        if s.done:  # the code is only ever sent to a session that has answered every trial
+            return {"done": True, "completion_code": s.spec.completion_code}
+        return {"done": False, "n_trials": s.n_trials, "question": s.spec.question,
                 "trial": brief(s.pending), "next": {side: brief(t) for side, t in s.peek().items()}}
 
     def record(self, sid, s: Session, meta: dict, side: str, rt_ms):
