@@ -37,19 +37,24 @@ window.potatoTimeline = function (jsPsych, potato) {
     };
   }
 
-  var STYLE = '<style>' +
+  // Page style, added once. #runtime-target gets the full viewport height so jsPsych's
+  // own margin:auto centring puts the trial in the middle of the screen.
+  var style = document.createElement('style');
+  style.textContent =
+    'html,body{margin:0}' +
+    '#runtime-target{height:100vh}' +
     '.chain-q{font-size:20px;font-weight:600;max-width:900px;margin:0 auto 24px}' +
     '.chain-opt{white-space:normal;text-align:left;font-size:18px;line-height:1.5;width:100%;min-height:120px;' +
     'padding:16px 20px;vertical-align:top}' +
     '#jspsych-html-button-response-btngroup{max-width:1100px;margin:0 auto;gap:24px}' +
-    '.chain-progress{color:#888;font-size:13px;margin-top:20px}' +
-    '</style>';
+    '.chain-progress{color:#888;font-size:13px;margin-top:20px}';
+  document.head.appendChild(style);
 
   var first = {type: jsPsychCallFunction, async: true, func: step(function () { return call('GET', '/chain/next'); })};
 
   var choice = {
     type: jsPsychHtmlButtonResponse,
-    stimulus: function () { return STYLE + '<p class="chain-q">' + esc(cur.question) + '</p>'; },
+    stimulus: function () { return '<p class="chain-q">' + esc(cur.question) + '</p>'; },
     choices: function () { return [cur.left, cur.right]; },
     button_html: function (text) { return '<button class="jspsych-btn chain-opt">' + esc(text) + '</button>'; },
     button_layout: 'grid',
