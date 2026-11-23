@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import networkx as nx
-from flask import Flask
+from flask import Flask, session
 
 from chain_core import (Session, Spec, attention_after, load_assets, parse_sid,
                         session_seed)
@@ -240,6 +240,13 @@ class TestServer(unittest.TestCase):
         self.run_session("u1--spec=s--chain=1")
         self.run_session("u1--spec=s--chain=2")
         self.assertEqual(len(list((Path(self.tmp.name) / "test" / "u1").iterdir())), 2)
+
+    def test_new_sid_in_url_switches_session(self):
+        self.app.add_url_rule("/", "home", lambda: str(session.get("username")))
+        self.login("u1--spec=s--chain=1")
+        self.assertEqual(self.client.get("/").data, b"u1--spec=s--chain=1")
+        self.assertEqual(self.client.get("/?sid=u1--spec=s--chain=1").data, b"u1--spec=s--chain=1")
+        self.assertEqual(self.client.get("/?sid=u1--spec=s--chain=2").data, b"None")  # logged out; Potato logs in the new sid
 
     def test_admin(self):
         self.run_session()

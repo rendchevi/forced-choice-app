@@ -145,6 +145,15 @@ def make_blueprint(chain: ChainStudy, is_admin) -> Blueprint:
     """``is_admin(key) -> bool`` guards the monitoring routes."""
     bp = Blueprint("chain", __name__)
 
+    @bp.before_app_request
+    def switch_session_from_url():
+        # Potato's URL login only runs when the browser is not logged in yet, so a participant
+        # opening the URL of their next session would land back in the previous one.
+        # A different ?sid= on the landing page therefore logs the old session out first.
+        sid = request.args.get("sid")
+        if request.path == "/" and sid and session.get("username") not in (None, sid):
+            session.clear()
+
     def current_sid():
         sid = session.get("username")
         if not sid:
