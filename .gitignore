@@ -1,0 +1,10 @@
+.claude/
+__pycache__/
+# written by Potato / the running study
+annotation_output/
+responses_data/
+project.sqlite*
+datasets.sqlite*
+admin_api_key.txt
+*.log
+layouts/

@@ -1,0 +1,285 @@
+{
+  "directed": false,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "ref_label": "envy",
+      "id": 865
+    },
+    {
+      "ref_label": "envy",
+      "id": 395
+    },
+    {
+      "ref_label": "envy",
+      "id": 777
+    },
+    {
+      "ref_label": "envy",
+      "id": 912
+    },
+    {
+      "ref_label": "envy",
+      "id": 431
+    },
+    {
+      "ref_label": "envy",
+      "id": 42
+    },
+    {
+      "ref_label": "envy",
+      "id": 266
+    },
+    {
+      "ref_label": "envy",
+      "id": 989
+    },
+    {
+      "ref_label": "envy",
+      "id": 524
+    },
+    {
+      "ref_label": "envy",
+      "id": 498
+    },
+    {
+      "ref_label": "admiration",
+      "id": 415
+    },
+    {
+      "ref_label": "admiration",
+      "id": 941
+    },
+    {
+      "ref_label": "admiration",
+      "id": 803
+    },
+    {
+      "ref_label": "admiration",
+      "id": 850
+    },
+    {
+      "ref_label": "admiration",
+      "id": 311
+    },
+    {
+      "ref_label": "admiration",
+      "id": 992
+    },
+    {
+      "ref_label": "admiration",
+      "id": 489
+    },
+    {
+      "ref_label": "admiration",
+      "id": 367
+    },
+    {
+      "ref_label": "admiration",
+      "id": 598
+    },
+    {
+      "ref_label": "admiration",
+      "id": 914
+    },
+    {
+      "ref_label": "admiration",
+      "id": 930
+    },
+    {
+      "ref_label": "admiration",
+      "id": 224
+    },
+    {
+      "ref_label": "admiration",
+      "id": 517
+    }
+  ],
+  "edges": [
+    {
+      "source": 865,
+      "target": 930
+    },
+    {
+      "source": 865,
+      "target": 415
+    },
+    {
+      "source": 865,
+      "target": 914
+    },
+    {
+      "source": 865,
+      "target": 598
+    },
+    {
+      "source": 395,
+      "target": 992
+    },
+    {
+      "source": 395,
+      "target": 989
+    },
+    {
+      "source": 395,
+      "target": 850
+    },
+    {
+      "source": 395,
+      "target": 517
+    },
+    {
+      "source": 777,
+      "target": 524
+    },
+    {
+      "source": 777,
+      "target": 489
+    },
+    {
+      "source": 777,
+      "target": 914
+    },
+    {
+      "source": 777,
+      "target": 803
+    },
+    {
+      "source": 912,
+      "target": 489
+    },
+    {
+      "source": 912,
+      "target": 803
+    },
+    {
+      "source": 912,
+      "target": 941
+    },
+    {
+      "source": 912,
+      "target": 524
+    },
+    {
+      "source": 431,
+      "target": 224
+    },
+    {
+      "source": 431,
+      "target": 367
+    },
+    {
+      "source": 431,
+      "target": 989
+    },
+    {
+      "source": 431,
+      "target": 415
+    },
+    {
+      "source": 42,
+      "target": 803
+    },
+    {
+      "source": 42,
+      "target": 598
+    },
+    {
+      "source": 42,
+      "target": 941
+    },
+    {
+      "source": 42,
+      "target": 311
+    },
+    {
+      "source": 266,
+      "target": 992
+    },
+    {
+      "source": 266,
+      "target": 224
+    },
+    {
+      "source": 266,
+      "target": 930
+    },
+    {
+      "source": 266,
+      "target": 367
+    },
+    {
+      "source": 989,
+      "target": 850
+    },
+    {
+      "source": 989,
+      "target": 498
+    },
+    {
+      "source": 524,
+      "target": 850
+    },
+    {
+      "source": 524,
+      "target": 914
+    },
+    {
+      "source": 498,
+      "target": 930
+    },
+    {
+      "source": 498,
+      "target": 517
+    },
+    {
+      "source": 498,
+      "target": 598
+    },
+    {
+      "source": 415,
+      "target": 598
+    },
+    {
+      "source": 415,
+      "target": 517
+    },
+    {
+      "source": 941,
+      "target": 517
+    },
+    {
+      "source": 941,
+      "target": 803
+    },
+    {
+      "source": 850,
+      "target": 992
+    },
+    {
+      "source": 311,
+      "target": 489
+    },
+    {
+      "source": 311,
+      "target": 992
+    },
+    {
+      "source": 311,
+      "target": 367
+    },
+    {
+      "source": 489,
+      "target": 914
+    },
+    {
+      "source": 367,
+      "target": 224
+    },
+    {
+      "source": 930,
+      "target": 224
+    }
+  ]
+}

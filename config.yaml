@@ -1,0 +1,25 @@
+# Potato config: the study shell around the chain (login, the jsPsych chain page, a closing page).
+# Start it with `python run.py`, not `potato start`: run.py adds the /chain/* routes.
+annotation_task_name: Forced-choice chain (prototype 1)
+task_dir: .
+output_annotation_dir: annotation_output/
+data_files: [data/closing.jsonl]
+item_properties: {id_key: id, text_key: text}
+
+# one URL = one session: ?sid=<user_id>--spec=<spec>--chain=<k> (parsed by chain_server.py)
+login: {type: url_direct, url_argument: sid}
+user_config: {allow_all_users: true}
+
+annotation_schemes:
+  - annotation_type: text
+    name: comments
+    description: Comments (optional)
+    multiline: true
+
+phases:
+  order: [chain, annotation]
+  chain:
+    type: jspsych
+    timeline: tasks/chain.js
+    plugins: [html-button-response, call-function]
+    save: incremental

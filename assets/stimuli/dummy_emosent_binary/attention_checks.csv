@@ -1,0 +1,11 @@
+att_id,stimulus_A,stimulus_B,answer
+att01,This is an attention check.,Choose the left sentence to pass.,A
+att02,Please select the sentence on the right.,This sentence is part of an attention check.,B
+att03,Attention check: pick this sentence.,Do not pick this one.,A
+att04,Quick check that you're still with us.,"To continue, click the sentence on the right.",B
+att05,Do not choose this sentence.,This is an attention check; select this one.,B
+att06,"If you are reading carefully, choose the sentence on the left.",This is just a filler sentence.,A
+att07,This item checks your attention.,Select the right-hand sentence for this item.,B
+att08,Pick me! This is an attention check.,Ignore this sentence and choose the other one.,A
+att09,Ignore the emotion task here and select the option on the right.,Here is a sentence for the attention check.,B
+att10,Please choose this sentence to show you are paying attention.,This sentence is the wrong answer.,A
