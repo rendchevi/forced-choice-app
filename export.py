@@ -15,7 +15,7 @@ from pathlib import Path
 from chain_core import load_study
 
 TRIAL_COLS = ["user_id", "sid", "i_trial", "trial_type", "i_draw", "n_draw", "x_id", "x_star_id", "x_hat_id",
-              "left_id", "chosen_side", "att_id", "correct", "rt_ms", "server_ms", "t_served", "t_answered"]
+              "left_id", "chosen_side", "att_id", "correct", "rt_ms", "server_ms", "t_prev", "t_answered"]
 
 
 def main(study_path="sessions.yaml"):

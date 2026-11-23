@@ -77,10 +77,13 @@ responses_data/<study_id>/<user_id>/spec=<spec>--chain=<k>/
 ```
 
 Trial fields: `i_trial, trial_type (chain|attention), i_draw, n_draw, x_id, x_star_id,
-x_hat_id, left_id, chosen_side, att_id, correct, rt_ms, server_ms, t_served, t_answered,
+x_hat_id, left_id, chosen_side, att_id, correct, rt_ms, server_ms, t_prev, t_answered,
 user_id, sid`. Stimuli are stored as ids; texts are in `stimuli.csv`.
-`rt_ms` is jsPsych's time from showing the pair to the click (measured in the browser);
-`server_ms` is the server's time from serving the trial to receiving the answer.
+`rt_ms` is measured in the browser (`performance.now()`) from the frame the pair appears to
+the click. The page shows the next pair as soon as the participant clicks (the server sends,
+with each trial, the trial each side leads to), so the server never sees a trial appear;
+`server_ms` is the server-side gap between this answer and the previous one (or the page
+load), a cross-check for `rt_ms` that also contains network jitter.
 
 The seed is a hash of `(study_id, user_id, spec, chain)`, so a session is reproducible
 from its URL and its choices.

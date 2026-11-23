@@ -88,21 +88,22 @@ class ChainStudy:
         self.sessions[sid] = (s, meta)
         return self.sessions[sid]
 
-    def payload(self, s: Session, meta: dict):
-        if s.done:
-            return {"done": True}
-        t = s.pending
-        meta["_served"] = time.time()  # a reload re-serves the trial and restarts its server clock
-        return {"done": False, "i_trial": t["i_trial"], "n_trials": s.n_trials, "question": s.spec.question,
-                "left": t["left_text"], "right": t["right_text"]}
+    def payload(self, s: Session):
+        """The trial on screen plus, for each side, the trial it leads to (None = the session ends)."""
+        brief = lambda t: None if t is None else {"i_trial": t["i_trial"], "left": t["left_text"], "right": t["right_text"]}
+        return {"done": s.done, "n_trials": s.n_trials, "question": s.spec.question,
+                "trial": brief(s.pending), "next": {side: brief(t) for side, t in s.peek().items()}}
 
     def record(self, sid, s: Session, meta: dict, side: str, rt_ms):
         now = time.time()
         rec = s.choose(side)
-        served = meta.get("_served")
+        # the page shows the next pair before the server hears about the click, so the server
+        # cannot time a trial itself; server_ms is the gap since the previous answer (or page load)
+        prev = meta.get("_prev")
+        meta["_prev"] = now
         rec.update(user_id=meta["user_id"], sid=sid, rt_ms=rt_ms,
-                   server_ms=round((now - served) * 1000) if served else None,
-                   t_served=served, t_answered=now)
+                   server_ms=round((now - prev) * 1000) if prev else None,
+                   t_prev=prev, t_answered=now)
         folder = self.folder(meta["user_id"], meta["spec"]["name"], meta["chain"])
         with open(folder / "trials.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -153,7 +154,8 @@ def make_blueprint(chain: ChainStudy, is_admin) -> Blueprint:
         sid = current_sid()
         with chain.lock:
             s, meta = chain.get(sid)
-            return jsonify(chain.payload(s, meta))
+            meta["_prev"] = time.time()  # page (re)load: the participant's clock restarts too
+            return jsonify(chain.payload(s))
 
     @bp.post("/chain/choose")
     def choose():
@@ -168,11 +170,11 @@ def make_blueprint(chain: ChainStudy, is_admin) -> Blueprint:
             s, meta = chain.get(sid)
             if s.done or i_trial != s.pending["i_trial"]:
                 # stale or repeated answer (double click, second tab): ignore it and resend the current state
-                resp = chain.payload(s, meta)
+                resp = chain.payload(s)
                 resp["stale"] = True
                 return jsonify(resp), 409
             chain.record(sid, s, meta, side, rt_ms)
-            return jsonify(chain.payload(s, meta))
+            return jsonify(chain.payload(s))
 
     def require_admin():
         if not is_admin(request.args.get("key")):

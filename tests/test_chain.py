@@ -125,6 +125,18 @@ class TestCore(unittest.TestCase):
         right = "left" if s.pending["answer"] == "A" else "right"
         self.assertTrue(s.choose(right)["correct"])
 
+    def test_peek_matches_choose(self):
+        for side_seq_seed in range(5):
+            s, rng = new_session(seed=side_seq_seed), random.Random(side_seq_seed)
+            while not s.done:
+                side = rng.choice(["left", "right"])
+                peeked = s.peek()
+                state = (s.rng.getstate(), s.x, s.i_trial, s.pending)
+                self.assertEqual(s.peek(), peeked)                       # peek leaves the session unchanged
+                self.assertEqual((s.rng.getstate(), s.x, s.i_trial, s.pending), state)
+                s.choose(side)
+                self.assertEqual(s.pending, peeked[side])
+
     def test_replay_reproduces_and_detects_change(self):
         a = new_session(seed=9)
         recs = [a.choose(side) for side in ["left", "right", "right", "left", "left", "right", "left"]]
@@ -159,7 +171,7 @@ class TestServer(unittest.TestCase):
         t = self.client.get("/chain/next").get_json()
         n = 0
         while not t["done"]:
-            t = self.client.post("/chain/choose", json={"i_trial": t["i_trial"], "side": "left", "rt_ms": 1234}).get_json()
+            t = self.client.post("/chain/choose", json={"i_trial": t["trial"]["i_trial"], "side": "left", "rt_ms": 1234}).get_json()
             n += 1
         return n
 
@@ -184,27 +196,35 @@ class TestServer(unittest.TestCase):
         self.assertEqual(rec["user_id"], "u1")
         self.assertIsNotNone(rec["server_ms"])
 
+    def test_prefetch_is_what_the_server_then_serves(self):
+        self.login("u3--spec=s--chain=1")
+        t = self.client.get("/chain/next").get_json()
+        while not t["done"]:
+            side = "right" if t["trial"]["i_trial"] % 2 else "left"
+            promised = t["next"][side]
+            t = self.client.post("/chain/choose", json={"i_trial": t["trial"]["i_trial"], "side": side, "rt_ms": 1}).get_json()
+            self.assertEqual(t["trial"], promised)              # None once the session is done
+
     def test_bad_input_and_stale_answer(self):
         self.login("u1--spec=s--chain=1")
         t = self.client.get("/chain/next").get_json()
         for body in [{"i_trial": 0, "side": "up"}, {"i_trial": "0", "side": "left"},
                      {"i_trial": 0, "side": "left", "rt_ms": -5}, {"i_trial": 0, "side": "left", "rt_ms": "fast"}]:
             self.assertEqual(self.client.post("/chain/choose", json=body).status_code, 400, body)
-        ok = self.client.post("/chain/choose", json={"i_trial": t["i_trial"], "side": "left", "rt_ms": 10})
+        ok = self.client.post("/chain/choose", json={"i_trial": t["trial"]["i_trial"], "side": "left", "rt_ms": 10})
         self.assertEqual(ok.status_code, 200)
-        again = self.client.post("/chain/choose", json={"i_trial": t["i_trial"], "side": "left", "rt_ms": 10})
+        again = self.client.post("/chain/choose", json={"i_trial": t["trial"]["i_trial"], "side": "left", "rt_ms": 10})
         self.assertEqual(again.status_code, 409)            # double click is not recorded twice
-        self.assertEqual(again.get_json()["i_trial"], t["i_trial"] + 1)
+        self.assertEqual(again.get_json()["trial"]["i_trial"], t["trial"]["i_trial"] + 1)
 
     def test_resume_after_restart(self):
         self.login("u2--spec=s--chain=1")
         t = self.client.get("/chain/next").get_json()
-        t = self.client.post("/chain/choose", json={"i_trial": t["i_trial"], "side": "right", "rt_ms": 5}).get_json()
-        before = self.chain.sessions["u2--spec=s--chain=1"][0].pending
+        t = self.client.post("/chain/choose", json={"i_trial": t["trial"]["i_trial"], "side": "right", "rt_ms": 5}).get_json()
         self.chain.sessions.clear()                          # what a restart loses
         after = self.client.get("/chain/next").get_json()
-        self.assertEqual(after["i_trial"], t["i_trial"])
-        self.assertEqual((after["left"], after["right"]), (before["left_text"], before["right_text"]))
+        self.assertEqual(after["trial"], t["trial"])
+        self.assertEqual(after["next"], t["next"])
 
     def test_chains_are_separate(self):
         self.run_session("u1--spec=s--chain=1")

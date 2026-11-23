@@ -190,6 +190,23 @@ class Session:
         self.pending = self._make_trial()
         return rec
 
+    def peek(self) -> dict:
+        """{side: the trial that choosing this side leads to (None = session ends)}, leaving the session unchanged.
+
+        Lets the page show the next pair the moment the participant clicks. The choice itself
+        never consumes randomness, so this is exactly what ``choose(side)`` will produce.
+        """
+        if self.done:
+            return {}
+        saved = (self.rng.getstate(), self.x, self.i_trial, self.pending)
+        out = {}
+        for side in SIDES:
+            self.choose(side)
+            out[side] = self.pending
+            self.rng.setstate(saved[0])
+            self.x, self.i_trial, self.pending = saved[1:]
+        return out
+
     def replay(self, records: list):
         """Re-apply recorded choices (after a restart) and check they reproduce the recorded trials."""
         for r in records:
