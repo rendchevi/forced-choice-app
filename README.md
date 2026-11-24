@@ -47,7 +47,7 @@ Do not use `potato start`: it would not add the `/chain/*` routes.
 | `proposal/parametric/` | Reserved for future proposals |
 | `export.py` | Merge all sessions into CSVs |
 | `data/closing.jsonl` | Placeholder item for the required annotation phase |
-| `assets/stimuli/<stimuli_name>/` | `stimuli.csv`, `<graph_name>.json` (networkx node-link), `attention_checks.csv` |
+| `assets/stimuli/<stimuli_name>/` | `stimuli.csv`, `<graph_name>.json` (networkx node-link), `attention_checks_choice.csv` (chain), `attention_checks_typicality.json` (typicality) |
 
 ## A spec
 

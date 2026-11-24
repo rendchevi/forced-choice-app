@@ -78,13 +78,13 @@ def sha256_file(path) -> str:
 class Assets:
     stimuli: dict          # stimulus_id (int) -> text
     graph: nx.Graph
-    attention: list        # rows of attention_checks.csv, in file order
+    attention: list        # rows of attention_checks_choice.csv, in file order
     sha256: dict           # file name -> sha256
 
 
 def load_assets(assets_root, stimuli_name: str, graph_name: str, n_attention: int) -> Assets:
     folder = Path(assets_root) / stimuli_name
-    stim_path, graph_path, att_path = folder / "stimuli.csv", folder / f"{graph_name}.json", folder / "attention_checks.csv"
+    stim_path, graph_path, att_path = folder / "stimuli.csv", folder / f"{graph_name}.json", folder / "attention_checks_choice.csv"
 
     stimuli = {}
     with open(stim_path, newline="", encoding="utf-8") as f:
