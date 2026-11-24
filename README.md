@@ -71,9 +71,11 @@ Do not use `potato start`: it would not add the `/chain/*` routes.
   `completion_code` and says the submission will be approved manually; that screen is the end
   of the study (Potato's own annotation page is never reached).
 - **Participant URL** (one URL = one session):
-  `http://127.0.0.1:8100/?sid=<user_id>--spec=<spec>--chain=<k>`,
-  e.g. `?sid=u1--spec=dummy_envy--chain=1`. `user_id` uses letters, digits, `_` and single `-`.
-  Same URL again resumes the session (also after a server restart); a new `chain` number is a new chain.
+  `http://127.0.0.1:8100/?sid=<user_id>--spec=<spec>`,
+  e.g. `?sid=u1--spec=dummy_envy`. `user_id` uses letters, digits, `_` and single `-`.
+  Same URL again resumes the session (also after a server restart); one session per user and spec.
+  A session runs `n_chain` chains of `n_draw` draws one after the other; each chain starts at its own
+  stimulus (drawn without replacement) and the participant sees no break between chains.
 - **Monitoring**: `http://127.0.0.1:8100/chain/admin?key=<admin key>`. The key is in
   `admin_api_key.txt`, which Potato writes on the first request to `/admin`.
 - **Export**: `python export.py` writes `export--trials.csv` and `export--sessions.csv`
@@ -109,10 +111,11 @@ specs:
     graph_name: b=4--emb=spades            # <graph_name>.json in that folder
     propose_fn: graph/dmcmcp               # proposal/graph/dmcmcp.py
     propose_params: {p_geom: 0.0, p_jump: 0.1, n_stuck: null}   # keyword arguments of that class
-    n_draw: 20
+    n_draw: 20                             # draws per chain
+    n_chain: 2                             # chains per session, one after the other
     question: Pick the sentence that ...
-    n_attention: 3                         # attention item k goes after draw floor(k*n_draw/(K+1))
-    attention_pass: 3
+    n_attention: 3                         # per chain; K = n_attention*n_chain checks, check k after global draw floor(k*n_draw*n_chain/(K+1))
+    attention_pass: 3                      # per chain; the session needs attention_pass*n_chain correct
     completion_code: DUMMY123              # shown on the last screen; empty = none
 ```
 
@@ -142,12 +145,12 @@ randomness from `rng`, no per-session state), then `propose_fn: graph/<name>`.
 ### Data
 
 ```
-responses_data/<study_id>/<user_id>/spec=<spec>--chain=<k>/
+responses_data/<study_id>/<user_id>/spec=<spec>/
   session.json    spec, seed, asset sha256, status, running summary
   trials.jsonl    one line per answered trial
 ```
 
-Trial fields: `i_trial, trial_type (chain|attention), i_draw, n_draw, x_id, x_star_id,
+Trial fields: `i_trial, trial_type (chain|attention), chain_idx, i_draw, n_draw, n_chain, x_id, x_star_id,
 x_hat_id, left_id, chosen_side, proposal_kind, n_steps, n_rejected, att_id, correct, rt_ms, server_ms, t_prev, t_answered,
 user_id, sid`. Stimuli are stored as ids; texts are in `stimuli.csv`.
 `rt_ms` is measured in the browser (`performance.now()`) from the frame the pair appears to
@@ -156,7 +159,7 @@ with each trial, the trial each side leads to), so the server never sees a trial
 `server_ms` is the server-side gap between this answer and the previous one (or the page
 load), a cross-check for `rt_ms` that also contains network jitter.
 
-The seed is a hash of `(study_id, user_id, spec, chain)`, so a session is reproducible
+The seed is a hash of `(study_id, user_id, spec)`, so a session is reproducible
 from its URL and its choices.
 
 ## Typicality (`studies/typicality/`)

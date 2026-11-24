@@ -8,11 +8,12 @@ output_annotation_dir: annotation_output/
 data_files: [data/closing.jsonl]
 item_properties: {id_key: id, text_key: text}
 
-# one URL = one session: ?sid=<user_id>--spec=<spec>--chain=<k> (parsed by chain_server.py;
+# one URL = one session: ?sid=<user_id>--spec=<spec> (parsed by chain_server.py;
 # Prolific URLs are turned into a sid there first)
 login: {type: url_direct, url_argument: sid}
 user_config: {allow_all_users: true}
-base_css: surveyflow/consent.css   # hides Potato's navigation bar (participant id, logout) on the consent page
+base_css: surveyflow/consent.css   # consent page styled like the task pages; hides Potato's navigation bar
+ui: {theme: light}                 # always light (no dark mode, no toggle), like the task pages
 
 annotation_schemes:
   - annotation_type: text

@@ -19,19 +19,24 @@ from proposal import load_proposal_class
 
 SIDES = ("left", "right")
 
-# <user_id>--spec=<spec>--chain=<k>; user_id may contain single hyphens, never "--"
-SID_RE = re.compile(r"(?P<user>[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*)"
-                    r"--spec=(?P<spec>[A-Za-z0-9_]+)--chain=(?P<chain>[0-9]{1,6})")
+# <user_id>--spec=<spec>: one session per user and spec; user_id may contain single hyphens, never "--"
+SID_RE = re.compile(r"(?P<user>[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*)--spec=(?P<spec>[A-Za-z0-9_]+)")
+SESSION_DIR_RE = re.compile(r"spec=[A-Za-z0-9_]+")   # {user_id}/spec={spec}/
 
 
 def parse_sid(sid: str):
-    """(user_id, spec_name, chain) from a session id, or None if it is malformed."""
+    """(user_id, spec_name) from a session id, or None if it is malformed."""
     m = SID_RE.fullmatch(sid or "")  # fullmatch: "$" would accept a trailing newline
-    return (m["user"], m["spec"], int(m["chain"])) if m else None
+    return (m["user"], m["spec"]) if m else None
 
 
-def session_seed(study_id: str, user_id: str, spec_name: str, chain: int) -> int:
-    key = "\x1f".join([study_id, user_id, spec_name, str(chain)]).encode()
+def session_files(root: Path) -> list[Path]:
+    """Every session.json under a study folder, in the current layout (older layouts are skipped)."""
+    return sorted(p for p in Path(root).glob("*/*/session.json") if SESSION_DIR_RE.fullmatch(p.parent.name))
+
+
+def session_seed(study_id: str, user_id: str, spec_name: str) -> int:
+    key = "\x1f".join([study_id, user_id, spec_name]).encode()
     return int.from_bytes(hashlib.sha256(key).digest()[:8], "big")
 
 
@@ -48,10 +53,11 @@ class Spec:
     stimuli_name: str
     graph_name: str
     propose_fn: str
-    n_draw: int
+    n_draw: int           # draws per chain
+    n_chain: int          # chains per session, run one after the other
     question: str
-    n_attention: int
-    attention_pass: int
+    n_attention: int      # attention checks per chain (K = n_attention * n_chain per session)
+    attention_pass: int   # correct checks needed per chain (attention_pass * n_chain per session)
     propose_params: dict = field(default_factory=dict)
     completion_code: str = ""      # shown on the last screen (Prolific); empty = none
 
@@ -64,8 +70,8 @@ def load_study(path):
         if not re.fullmatch(r"[A-Za-z0-9_]+", name):
             raise ValueError(f"spec name {name!r}: use letters, digits and _ only (it goes in the URL)")
         spec = Spec(name=name, **s)
-        if spec.n_draw < 1 or not 0 <= spec.attention_pass <= spec.n_attention:
-            raise ValueError(f"spec {name}: need n_draw >= 1 and 0 <= attention_pass <= n_attention")
+        if spec.n_draw < 1 or spec.n_chain < 1 or not 0 <= spec.attention_pass <= spec.n_attention:
+            raise ValueError(f"spec {name}: need n_draw >= 1, n_chain >= 1 and 0 <= attention_pass <= n_attention")
         specs[name] = spec
     return raw, specs
 
@@ -120,6 +126,16 @@ def load_assets(assets_root, stimuli_name: str, graph_name: str, n_attention: in
                   {p.name: sha256_file(p) for p in (stim_path, graph_path, att_path)})
 
 
+def check_spec_assets(spec: Spec, assets: Assets):
+    """Raise if this spec cannot run on these assets (checked at boot)."""
+    if spec.n_chain > assets.graph.number_of_nodes():
+        raise ValueError(f"spec {spec.name}: n_chain={spec.n_chain} chains need distinct starting stimuli, "
+                         f"but the graph has only {assets.graph.number_of_nodes()} nodes")
+    if spec.n_attention * spec.n_chain > len(assets.attention):
+        raise ValueError(f"spec {spec.name}: n_attention * n_chain = {spec.n_attention * spec.n_chain} attention checks, "
+                         f"but the attention file has only {len(assets.attention)} items")
+
+
 def build_proposal(spec: Spec, assets: Assets):
     cls = load_proposal_class(spec.propose_fn)
     return cls(assets.graph, **spec.propose_params)
@@ -128,7 +144,11 @@ def build_proposal(spec: Spec, assets: Assets):
 # ---------------------------------------------------------------- one session
 
 class Session:
-    """One chain. ``pending`` is the trial on screen; ``choose`` answers it and makes the next.
+    """One session: n_chain chains of n_draw draws each, one after the other, with
+    K = n_attention * n_chain attention checks spread evenly over all n_chain * n_draw draws.
+    Each chain starts at its own stimulus (drawn without replacement) with n_rejected = 0;
+    the participant sees no break between chains.
+    ``pending`` is the trial on screen; ``choose`` answers it and makes the next.
 
     Every random draw comes from ``rng`` in a fixed order, so the same seed and the same
     choices reproduce the same trials.
@@ -137,16 +157,19 @@ class Session:
     def __init__(self, spec: Spec, assets: Assets, proposal, seed: int):
         self.spec, self.assets, self.proposal, self.seed = spec, assets, proposal, seed
         self.rng = random.Random(seed)
-        self.x = self.rng.choice(sorted(assets.graph.nodes))
-        items = self.rng.sample(assets.attention, spec.n_attention)
-        # schedule: ("chain", i_draw) or ("attention", item); attention placed after the given number of draws
-        after = attention_after(spec.n_draw, spec.n_attention)
+        check_spec_assets(spec, assets)
+        self.starts = self.rng.sample(sorted(assets.graph.nodes), spec.n_chain)   # x0 of each chain, all distinct
+        n_total, n_att = spec.n_draw * spec.n_chain, spec.n_attention * spec.n_chain
+        items = self.rng.sample(assets.attention, n_att)
+        # schedule: ("chain", global draw index) or ("attention", item); attention placed after the given number of draws
+        after = attention_after(n_total, n_att)
         self.schedule = []
-        for d in range(spec.n_draw + 1):
+        for d in range(n_total + 1):
             self.schedule += [("attention", items[k]) for k, a in enumerate(after) if a == d]
-            if d < spec.n_draw:
+            if d < n_total:
                 self.schedule.append(("chain", d))
         self.i_trial = 0
+        self.x = None
         self.n_rejected = 0   # chain proposals rejected in a row (x kept); attention trials do not count
         self.pending = self._make_trial()
 
@@ -165,12 +188,16 @@ class Session:
         if kind == "attention":
             return {"i_trial": self.i_trial, "trial_type": "attention", "att_id": what["att_id"],
                     "left_text": what["stimulus_A"], "right_text": what["stimulus_B"], "answer": what["answer"]}
+        chain_idx, i_draw = divmod(what, self.spec.n_draw)
+        if i_draw == 0:       # a new chain: fresh start, fresh rejection count
+            self.x, self.n_rejected = self.starts[chain_idx], 0
         x_star, info = self.proposal.propose(self.x, self.rng, self.n_rejected)
         if x_star == self.x:
             raise RuntimeError(f"{self.spec.propose_fn} proposed x itself")
         x_left = self.rng.random() < 0.5
         left, right = (self.x, x_star) if x_left else (x_star, self.x)
-        return {"i_trial": self.i_trial, "trial_type": "chain", "i_draw": what, "x_id": self.x, "x_star_id": x_star,
+        return {"i_trial": self.i_trial, "trial_type": "chain", "chain_idx": chain_idx, "i_draw": i_draw,
+                "x_id": self.x, "x_star_id": x_star,
                 "left_id": left, "right_id": right, "n_rejected": self.n_rejected,
                 "proposal_kind": info.get("proposal_kind"), "n_steps": info.get("n_steps"),
                 "left_text": self.assets.stimuli[left], "right_text": self.assets.stimuli[right]}
@@ -183,12 +210,12 @@ class Session:
             raise ValueError(f"side must be one of {SIDES}")
         t = self.pending
         rec = {"i_trial": t["i_trial"], "trial_type": t["trial_type"], "chosen_side": side,
-               "i_draw": None, "n_draw": self.spec.n_draw, "x_id": None, "x_star_id": None, "x_hat_id": None,
+               "chain_idx": None, "i_draw": None, "n_draw": self.spec.n_draw, "n_chain": self.spec.n_chain, "x_id": None, "x_star_id": None, "x_hat_id": None,
                "left_id": None, "att_id": None, "correct": None,
                "proposal_kind": None, "n_steps": None, "n_rejected": None}
         if t["trial_type"] == "chain":
             x_hat = t["left_id"] if side == "left" else t["right_id"]
-            rec.update(i_draw=t["i_draw"], x_id=t["x_id"], x_star_id=t["x_star_id"], x_hat_id=x_hat, left_id=t["left_id"],
+            rec.update(chain_idx=t["chain_idx"], i_draw=t["i_draw"], x_id=t["x_id"], x_star_id=t["x_star_id"], x_hat_id=x_hat, left_id=t["left_id"],
                        proposal_kind=t["proposal_kind"], n_steps=t["n_steps"], n_rejected=t["n_rejected"])
             self.n_rejected = self.n_rejected + 1 if x_hat == self.x else 0
             self.x = x_hat

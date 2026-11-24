@@ -30,7 +30,7 @@ STIM = "dummy_emosent_binary"
 
 def spec(**kw):
     base = dict(name="t", stimuli_name=STIM, graph_name="b=4--emb=spades", propose_fn="graph/dmcmcp",
-                n_draw=20, question="q?", n_attention=3, attention_pass=3)
+                n_draw=20, n_chain=1, question="q?", n_attention=3, attention_pass=3)
     return Spec(**{**base, **kw})
 
 
@@ -140,14 +140,15 @@ class TestRejectionCount(unittest.TestCase):
 
 class TestCore(unittest.TestCase):
     def test_parse_sid(self):
-        self.assertEqual(parse_sid("u-1_a--spec=dummy_envy--chain=3"), ("u-1_a", "dummy_envy", 3))
-        for bad in ["", "u1", "u1--spec=a", "u--x--spec=a--chain=1", "../u--spec=a--chain=1",
-                    "u1--spec=a-b--chain=1", "u1--spec=a--chain=x", "u1--spec=a--chain=1\n"]:
+        self.assertEqual(parse_sid("u-1_a--spec=dummy_envy"), ("u-1_a", "dummy_envy"))
+        for bad in ["", "u1", "u1--spec=", "u--x--spec=a", "../u--spec=a", "u1--spec=a-b",
+                    "u1--spec=a--chain=1", "u1--spec=a\n"]:
             self.assertIsNone(parse_sid(bad), bad)
 
-    def test_seed_differs_per_chain(self):
-        self.assertNotEqual(session_seed("s", "u", "a", 1), session_seed("s", "u", "a", 2))
-        self.assertEqual(session_seed("s", "u", "a", 1), session_seed("s", "u", "a", 1))
+    def test_seed_differs_per_user_and_spec(self):
+        self.assertNotEqual(session_seed("s", "u", "a"), session_seed("s", "u", "b"))
+        self.assertNotEqual(session_seed("s", "u", "a"), session_seed("s", "v", "a"))
+        self.assertEqual(session_seed("s", "u", "a"), session_seed("s", "u", "a"))
 
     def test_attention_spread(self):
         self.assertEqual(attention_after(20, 3), [5, 10, 15])
@@ -175,6 +176,34 @@ class TestCore(unittest.TestCase):
         for r in chain:
             self.assertIn(r["x_hat_id"], (r["x_id"], r["x_star_id"]))
             self.assertTrue(s.assets.graph.has_edge(r["x_id"], r["x_star_id"]))
+
+    def test_multi_chain_session(self):
+        s = new_session(seed=12, n_draw=6, n_chain=3, n_attention=2, attention_pass=2)
+        self.assertEqual(s.n_trials, 3 * 6 + 3 * 2)
+        recs, rng = [], random.Random(4)
+        while not s.done:
+            recs.append(s.choose(rng.choice(["left", "right"])))
+        chain = [r for r in recs if r["trial_type"] == "chain"]
+        att = [r for r in recs if r["trial_type"] == "attention"]
+        self.assertEqual([(r["chain_idx"], r["i_draw"]) for r in chain], [(c, d) for c in range(3) for d in range(6)])
+        self.assertEqual(len({r["att_id"] for r in att}), 6)                     # K = n_attention * n_chain, distinct
+        # check k after global draw floor(k * 18 / 7): 2, 5, 7, 10, 12, 15
+        draws_before = [sum(r["trial_type"] == "chain" for r in recs[:recs.index(a)]) for a in att]
+        self.assertEqual(draws_before, [2, 5, 7, 10, 12, 15])
+        starts = [r["x_id"] for r in chain if r["i_draw"] == 0]
+        self.assertEqual(starts, s.starts)
+        self.assertEqual(len(set(starts)), 3)                                    # distinct starting stimuli
+        for prev, r in zip(chain, chain[1:]):
+            if r["i_draw"] > 0:
+                self.assertEqual(r["x_id"], prev["x_hat_id"])                    # within a chain: x <- x_hat
+            else:
+                self.assertEqual(r["n_rejected"], 0)                             # new chain: count restarts
+
+    def test_n_chain_must_fit_the_assets(self):
+        with self.assertRaises(ValueError):
+            new_session(n_chain=24)                                              # 23 stimuli
+        with self.assertRaises(ValueError):
+            new_session(n_chain=4, n_attention=3)                                # 12 checks, 10 items
 
     def test_order_is_randomised(self):
         s = new_session(seed=5, n_draw=200, n_attention=0, attention_pass=0)
@@ -219,7 +248,7 @@ class TestServer(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         study = {"study_id": "test", "output_root": self.tmp.name, "assets_root": str(ASSETS),
                  "no_consent_code": "NOC", "abandon_after_min": 30}
-        self.specs = {"s": spec(name="s", n_draw=4, n_attention=1, attention_pass=1, completion_code="CODE1")}
+        self.specs = {"s": spec(name="s", n_draw=4, n_chain=2, n_attention=1, attention_pass=1, completion_code="CODE1")}
         self.chain = ChainStudy(study, self.specs)
         self.app = Flask(__name__)
         self.app.secret_key = "test"
@@ -233,7 +262,7 @@ class TestServer(unittest.TestCase):
         with self.client.session_transaction() as sess:
             sess["username"] = sid
 
-    def run_session(self, sid="u1--spec=s--chain=1"):
+    def run_session(self, sid="u1--spec=s"):
         self.login(sid)
         t = self.client.get("/chain/next").get_json()
         n = 0
@@ -246,17 +275,17 @@ class TestServer(unittest.TestCase):
         self.assertEqual(self.client.get("/chain/next").status_code, 401)
         self.login("not a sid")
         self.assertEqual(self.client.get("/chain/next").status_code, 400)
-        self.login("u1--spec=unknown--chain=1")
+        self.login("u1--spec=unknown")
         self.assertEqual(self.client.get("/chain/next").status_code, 404)
 
     def test_full_session_writes_files(self):
-        self.assertEqual(self.run_session(), 5)
-        folder = Path(self.tmp.name) / "test" / "u1" / "spec=s--chain=1"
+        self.assertEqual(self.run_session(), 10)                               # 2 chains x 4 draws + 2 checks
+        folder = Path(self.tmp.name) / "test" / "u1" / "spec=s"
         lines = (folder / "trials.jsonl").read_text().splitlines()
         meta = json.loads((folder / "session.json").read_text())
-        self.assertEqual(len(lines), 5)
+        self.assertEqual(len(lines), 10)
         self.assertEqual(meta["status"], "complete")
-        self.assertEqual(meta["n_draw_done"], 4)
+        self.assertEqual(meta["n_draw_done"], 8)
         self.assertEqual(meta["median_rt_ms"], 1234)
         self.assertIsNotNone(meta["attention_passed"])
         rec = json.loads(lines[0])
@@ -264,7 +293,7 @@ class TestServer(unittest.TestCase):
         self.assertIsNotNone(rec["server_ms"])
 
     def test_prefetch_is_what_the_server_then_serves(self):
-        self.login("u3--spec=s--chain=1")
+        self.login("u3--spec=s")
         t = self.client.get("/chain/next").get_json()
         while not t["done"]:
             side = "right" if t["trial"]["i_trial"] % 2 else "left"
@@ -276,15 +305,15 @@ class TestServer(unittest.TestCase):
                 self.assertEqual(t["trial"], promised)
 
     def test_completion_code_only_when_done(self):
-        self.login("u4--spec=s--chain=1")
+        self.login("u4--spec=s")
         t = self.client.get("/chain/next").get_json()
         self.assertNotIn("completion_code", t)
-        self.run_session("u4--spec=s--chain=1")
+        self.run_session("u4--spec=s")
         self.assertEqual(self.client.get("/chain/next").get_json(),
                          {"done": True, "completion_code": "CODE1", "redirect_url": None})  # test link: no Prolific
 
     def test_bad_input_and_stale_answer(self):
-        self.login("u1--spec=s--chain=1")
+        self.login("u1--spec=s")
         t = self.client.get("/chain/next").get_json()
         for body in [{"i_trial": 0, "side": "up"}, {"i_trial": "0", "side": "left"},
                      {"i_trial": 0, "side": "left", "rt_ms": -5}, {"i_trial": 0, "side": "left", "rt_ms": "fast"}]:
@@ -296,7 +325,7 @@ class TestServer(unittest.TestCase):
         self.assertEqual(again.get_json()["trial"]["i_trial"], t["trial"]["i_trial"] + 1)
 
     def test_resume_after_restart(self):
-        self.login("u2--spec=s--chain=1")
+        self.login("u2--spec=s")
         t = self.client.get("/chain/next").get_json()
         t = self.client.post("/chain/choose", json={"i_trial": t["trial"]["i_trial"], "side": "right", "rt_ms": 5}).get_json()
         self.chain.sessions.clear()                          # what a restart loses
@@ -304,34 +333,34 @@ class TestServer(unittest.TestCase):
         self.assertEqual(after["trial"], t["trial"])
         self.assertEqual(after["next"], t["next"])
 
-    def test_chains_are_separate(self):
-        self.run_session("u1--spec=s--chain=1")
-        self.run_session("u1--spec=s--chain=2")
-        self.assertEqual(len(list((Path(self.tmp.name) / "test" / "u1").iterdir())), 2)
+    def test_one_session_per_user_and_spec(self):
+        self.assertEqual(self.run_session("u1--spec=s"), 10)
+        self.assertEqual(self.run_session("u1--spec=s"), 0)                     # same URL: already complete
+        self.assertEqual(len(list((Path(self.tmp.name) / "test" / "u1").iterdir())), 1)
 
     def test_new_sid_in_url_switches_session(self):
         self.app.add_url_rule("/", "home", lambda: str(session.get("username")))
-        self.login("u1--spec=s--chain=1")
-        self.assertEqual(self.client.get("/").data, b"u1--spec=s--chain=1")
-        self.assertEqual(self.client.get("/?sid=u1--spec=s--chain=1").data, b"u1--spec=s--chain=1")
-        self.assertEqual(self.client.get("/?sid=u1--spec=s--chain=2").data, b"None")  # logged out; Potato logs in the new sid
+        self.login("u1--spec=s")
+        self.assertEqual(self.client.get("/").data, b"u1--spec=s")
+        self.assertEqual(self.client.get("/?sid=u1--spec=s").data, b"u1--spec=s")
+        self.assertEqual(self.client.get("/?sid=u2--spec=s").data, b"None")  # logged out; Potato logs in the new sid
 
     def test_admin(self):
         self.run_session()
         self.assertEqual(self.client.get("/chain/admin").status_code, 403)
         page = self.client.get("/chain/admin?key=k")
         self.assertEqual(page.status_code, 200)
-        self.assertIn(b"u1--spec=s--chain=1", page.data)
+        self.assertIn(b"u1--spec=s", page.data)
         csv_text = self.client.get("/chain/admin.csv?key=k").data.decode()
         self.assertEqual(len(csv_text.strip().splitlines()), 2)
 
     def test_admin_states_and_filters(self):
-        self.run_session("u1--spec=s--chain=1")                     # pass (attention item answered left = correct?)
-        self.login("u2--spec=s--chain=1")
+        self.run_session("u1--spec=s")                     # pass (attention item answered left = correct?)
+        self.login("u2--spec=s")
         self.client.get("/chain/next")                              # started, no answer yet
-        self.login("u3--spec=s--chain=1")
+        self.login("u3--spec=s")
         self.client.get("/chain/next")
-        meta = Path(self.tmp.name) / "test" / "u3" / "spec=s--chain=1" / "session.json"
+        meta = Path(self.tmp.name) / "test" / "u3" / "spec=s" / "session.json"
         m = json.loads(meta.read_text())
         m["started"] -= 3600                                        # idle for an hour
         meta.write_text(json.dumps(m))
@@ -362,22 +391,20 @@ class TestProlific(unittest.TestCase):
             with self.assertRaises(ValueError):
                 prolific_ids(bad)
 
-    def test_entry_assigns_and_resumes_chains(self):
+    def test_entry_and_resume(self):
         r = self.enter()
-        self.assertEqual((r.status_code, r.location), (302, f"/?sid={PID}--spec=s--chain=1"))
-        self.assertEqual(self.enter().location, f"/?sid={PID}--spec=s--chain=1")       # same Prolific session: resume
-        self.assertEqual(self.enter(SESS2).location, f"/?sid={PID}--spec=s--chain=2")  # new Prolific session: new chain
+        self.assertEqual((r.status_code, r.location), (302, f"/?sid={PID}--spec=s"))
+        self.assertEqual(self.enter().location, f"/?sid={PID}--spec=s")         # same Prolific session: resume
+        self.assertEqual(self.enter(SESS2).location, f"/?sid={PID}--spec=s")    # new Prolific session: same session
+        known = json.loads((Path(self.tmp.name) / "test" / PID / "prolific.json").read_text())
+        self.assertEqual(set(known), {SESS1, SESS2})                            # both Prolific sessions recorded
         self.assertEqual(self.enter(spec="nope").status_code, 404)
         self.assertEqual(self.enter(pid="nothex").status_code, 400)
-
-    def test_entry_skips_chains_used_by_test_links(self):
-        self.run_session(f"{PID}--spec=s--chain=1")
-        self.assertEqual(self.enter().location, f"/?sid={PID}--spec=s--chain=2")
 
     def test_ids_stored_and_redirect_at_the_end(self):
         sid = self.enter().location.split("sid=")[1]
         self.run_session(sid)
-        meta = json.loads((Path(self.tmp.name) / "test" / PID / "spec=s--chain=1" / "session.json").read_text())
+        meta = json.loads((Path(self.tmp.name) / "test" / PID / "spec=s" / "session.json").read_text())
         self.assertEqual(meta["prolific"], {"PROLIFIC_PID": PID, "STUDY_ID": STUDY, "SESSION_ID": SESS1})
         self.assertEqual(self.client.get("/chain/next").get_json()["redirect_url"],
                          "https://app.prolific.com/submissions/complete?cc=CODE1")
@@ -386,9 +413,9 @@ class TestProlific(unittest.TestCase):
     def test_no_consent_exit_link(self):
         page = "{{ exit_url | default('') }}"
         with self.app.test_request_context("/"):
-            session["username"] = f"{PID}--spec=s--chain=1"
+            session["username"] = f"{PID}--spec=s"
             self.assertEqual(render_template_string(page), "https://app.prolific.com/submissions/complete?cc=NOC")
-            session["username"] = "u1--spec=s--chain=1"
+            session["username"] = "u1--spec=s"
             self.assertEqual(render_template_string(page), "")
 
 

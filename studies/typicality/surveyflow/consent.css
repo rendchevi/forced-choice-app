@@ -1,5 +1,48 @@
-/* Potato's own pages (only the consent page is reached): no navigation bar (it shows the participant id
-   and a logout link) and no footer; normal-weight prose (Potato sets phase-page text in a bold legend). */
-nav.potato-navbar, footer.potato-footer { display: none !important; }
-form.pure-display legend { font-weight: 400; }
-form.pure-display legend b, form.pure-display legend h3 { font-weight: 650; }
+/* Potato's consent page, styled like our task pages (tasks/*.js): Open Sans, white, #222 text,
+   purple accent #6b5ccf, sizes that follow the window width. Potato inlines this file (base_css).
+   The jsPsych stylesheet only declares the Open Sans font faces and jspsych-* classes. */
+@import url("/static/vendor/jspsych-8.3.0/jspsych.css");
+
+/* no Potato navigation bar (it shows the participant id and a logout link), no footer, no key hints */
+nav.potato-navbar, footer.potato-footer, .keybinding-badge, #prev-btn-placeholder { display: none !important; }
+
+html, body { background: #fff !important; color: #222 !important; }
+body, body * { font-family: "Open Sans", Arial, sans-serif !important; }
+
+/* one centred column, as wide and as large as the task's final screen */
+#annotation-forms, .potato-nav {
+  max-width: min(60vw, 1100px); margin-left: auto !important; margin-right: auto !important;
+  font-size: clamp(16px, 1.2vw, 26px); line-height: 1.6;
+}
+#annotation-forms { padding-top: 4vw; }
+#annotation-forms fieldset, #annotation-forms form, .annotation_schema {
+  border: 0 !important; box-shadow: none !important; background: transparent !important; padding: 0; margin: 0;
+}
+
+/* consent text: normal-weight prose (Potato sets phase-page text in a bold legend), bold headings */
+form.pure-display legend { font-weight: 400; font-size: 1em; color: #222; float: none; width: auto; }
+form.pure-display legend h1, form.pure-display legend h2, form.pure-display legend h3 {
+  font-size: 1.3em; font-weight: 600; margin: 0 0 .8em;
+}
+form.pure-display legend b, form.pure-display legend strong { font-weight: 600; }
+
+/* the question and its two answers, drawn like the chain's option buttons */
+.shadcn-radio-title { font-size: 1em !important; font-weight: 600 !important; color: #222 !important; margin: 1.6em 0 .8em; }
+.shadcn-radio-options { display: flex; flex-direction: column; gap: .7em; }
+.shadcn-radio-option {
+  display: flex; align-items: center; gap: .8em; padding: .8em 1.1em;
+  background: #fff; border: 1px solid #bbb; border-radius: 6px; cursor: pointer;
+}
+.shadcn-radio-option:hover { border-color: #666; background: #fafafa; }
+.shadcn-radio-option:has(input:checked) { border-color: #6b5ccf; background: #f4f2fc; }
+.shadcn-radio-input { accent-color: #6b5ccf; width: 1.1em; height: 1.1em; margin: 0; }
+.shadcn-radio-label { font-size: 1em !important; color: #222 !important; cursor: pointer; flex: 1; }
+
+/* Next, like the "Back to Prolific" button */
+.potato-nav { display: flex; justify-content: flex-end; padding: 2em 0 4vw; }
+#next-btn {
+  background: #6b5ccf !important; color: #fff !important; border: 0 !important; border-radius: 6px;
+  padding: .5em 1.4em; font-size: 1em; font-weight: 600; cursor: pointer;
+}
+#next-btn:hover { background: #5a4bbd !important; }
+#next-btn i { display: none; }

@@ -3,7 +3,7 @@
     python run.py [sessions.yaml]
 
 Prolific URL:     http://<host>:<port>/?PROLIFIC_PID=<pid>&STUDY_ID=<id>&SESSION_ID=<id>&spec=<spec>
-Test URL:         http://<host>:<port>/?sid=<user_id>--spec=<spec>--chain=<k>
+Test URL:         http://<host>:<port>/?sid=<user_id>--spec=<spec>
 Monitoring:       http://<host>:<port>/chain/admin?key=<contents of admin_api_key.txt>
 """
 

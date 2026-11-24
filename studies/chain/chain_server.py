@@ -3,9 +3,9 @@
 Identity comes only from the Potato login (``session["username"]`` = the session id),
 never from the request body. Storage, one folder per session:
 
-    {output_root}/{study_id}/{user_id}/spec={spec}--chain={k}/session.json   summary, rewritten each trial
-    {output_root}/{study_id}/{user_id}/spec={spec}--chain={k}/trials.jsonl   one line per answered trial
-    {output_root}/{study_id}/{user_id}/prolific.json                          Prolific SESSION_ID -> sid (prolific.py)
+    {output_root}/{study_id}/{user_id}/spec={spec}/session.json   summary, rewritten each trial
+    {output_root}/{study_id}/{user_id}/spec={spec}/trials.jsonl   one line per answered trial (all n_chain chains)
+    {output_root}/{study_id}/{user_id}/prolific.json              Prolific SESSION_ID -> sid (prolific.py)
 """
 
 import csv
@@ -22,8 +22,8 @@ from pathlib import Path
 
 from flask import Blueprint, Response, abort, jsonify, redirect, request, session
 
-from chain_core import (SIDES, Session, build_proposal, load_assets, parse_sid,
-                        session_seed)
+from chain_core import (SIDES, Session, build_proposal, check_spec_assets, load_assets, parse_sid,
+                        session_files, session_seed)
 from prolific import assign_sid, completion_url, ids_for_sid, is_prolific_user, prolific_ids
 
 log = logging.getLogger(__name__)
@@ -46,7 +46,9 @@ class ChainStudy:
         self.abandon_after_s = 60 * study["abandon_after_min"]
         self.assets, self.proposals = {}, {}
         for spec in specs.values():  # load everything at boot so a bad spec fails before anyone arrives
-            self.assets[spec.name] = load_assets(study["assets_root"], spec.stimuli_name, spec.graph_name, spec.n_attention)
+            self.assets[spec.name] = load_assets(study["assets_root"], spec.stimuli_name, spec.graph_name,
+                                                 spec.n_attention * spec.n_chain)
+            check_spec_assets(spec, self.assets[spec.name])
             self.proposals[spec.name] = build_proposal(spec, self.assets[spec.name])
             for w in self.proposals[spec.name].check():
                 log.warning("spec %s: %s", spec.name, w)
@@ -55,12 +57,8 @@ class ChainStudy:
         # so the fsync of one session's answer never holds up another session
         self.lock = threading.Lock()
 
-    def folder(self, user_id, spec_name, chain) -> Path:
-        return self.root / user_id / f"spec={spec_name}--chain={chain}"
-
-    def used_chains(self, user_id, spec_name):
-        """Chain numbers this user already has for this spec (session folders on disk)."""
-        return [int(p.name.rsplit("=", 1)[1]) for p in (self.root / user_id).glob(f"spec={spec_name}--chain=*")]
+    def folder(self, user_id, spec_name) -> Path:
+        return self.root / user_id / f"spec={spec_name}"
 
     def get(self, sid):
         """The live session for this sid, created or rebuilt from disk on first use. Caller holds the lock."""
@@ -69,18 +67,18 @@ class ChainStudy:
         parsed = parse_sid(sid)
         if not parsed:
             abort(400, "malformed session id")
-        user_id, spec_name, chain = parsed
+        user_id, spec_name = parsed
         spec = self.specs.get(spec_name)
         if spec is None:
             abort(404, f"unknown spec {spec_name!r}")
-        seed = session_seed(self.study_id, user_id, spec_name, chain)
+        seed = session_seed(self.study_id, user_id, spec_name)
         s = Session(spec, self.assets[spec_name], self.proposals[spec_name], seed)
-        folder = self.folder(user_id, spec_name, chain)
+        folder = self.folder(user_id, spec_name)
         meta_path = folder / "session.json"
         if meta_path.exists():
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             if meta["spec"] != spec.__dict__ or meta["seed"] != seed:
-                abort(409, "the spec changed since this session started; use a new chain number or spec name")
+                abort(409, "the spec changed since this session started; use a new user id or spec name")
             if meta["asset_sha256"] != self.assets[spec_name].sha256:
                 log.warning("%s: asset files changed since the session started", sid)
             records = [json.loads(line) for line in (folder / "trials.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -88,7 +86,7 @@ class ChainStudy:
         else:
             folder.mkdir(parents=True, exist_ok=True)
             (folder / "trials.jsonl").touch()
-            meta = {"study_id": self.study_id, "sid": sid, "user_id": user_id, "chain": chain, "seed": seed,
+            meta = {"study_id": self.study_id, "sid": sid, "user_id": user_id, "seed": seed,
                     "spec": spec.__dict__, "asset_sha256": self.assets[spec_name].sha256,
                     "prolific": ids_for_sid(self.root, user_id, sid),
                     "status": "in_progress", "started": time.time(), "updated": None, "finished": None,
@@ -121,7 +119,7 @@ class ChainStudy:
         rec.update(user_id=meta["user_id"], sid=sid, rt_ms=rt_ms,
                    server_ms=round((now - prev) * 1000) if prev else None,
                    t_prev=prev, t_answered=now)
-        folder = self.folder(meta["user_id"], meta["spec"]["name"], meta["chain"])
+        folder = self.folder(meta["user_id"], meta["spec"]["name"])
         with open(folder / "trials.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             f.flush()
@@ -138,19 +136,20 @@ class ChainStudy:
             meta["attention_correct"] += bool(rec["correct"])
         if s.done:
             meta.update(status="complete", finished=now,
-                        attention_passed=meta["attention_correct"] >= s.spec.attention_pass)
+                        attention_passed=meta["attention_correct"] >= s.spec.attention_pass * s.spec.n_chain)
         _write_json_atomic(folder / "session.json", {k: v for k, v in meta.items() if not k.startswith("_")})
 
     def summaries(self):
         rows, now = [], time.time()
-        for p in sorted(self.root.glob("*/*/session.json")):  # shortcut: scans files per request; index if slow
+        for p in session_files(self.root):  # shortcut: scans files per request; index if slow
             m = json.loads(p.read_text(encoding="utf-8"))
             last = m.get("updated") or m["started"]
-            pro = m.get("prolific") or {}
+            pro, sp = m.get("prolific") or {}, m["spec"]
             rows.append({"state": _state(m, now - last > self.abandon_after_s),
-                         "user_id": m["user_id"], "spec": m["spec"]["name"], "chain": m["chain"],
-                         "draws": f'{m["n_draw_done"]}/{m["spec"]["n_draw"]}',
-                         "attention": f'{m["attention_correct"]}/{m["attention_done"]} (need {m["spec"]["attention_pass"]}/{m["spec"]["n_attention"]})',
+                         "user_id": m["user_id"], "spec": m["spec"]["name"],
+                         "draws": f'{m["n_draw_done"]}/{sp["n_draw"] * sp["n_chain"]} ({sp["n_chain"]} chains)',
+                         "attention": f'{m["attention_correct"]}/{m["attention_done"]} '
+                                      f'(need {sp["attention_pass"] * sp["n_chain"]}/{sp["n_attention"] * sp["n_chain"]})',
                          "median_rt_ms": m["median_rt_ms"],
                          "duration_min": round(((m["finished"] or last) - m["started"]) / 60, 1),
                          "started": _fmt_time(m["started"]), "last_activity": _fmt_time(last),
@@ -179,7 +178,8 @@ def make_blueprint(chain: ChainStudy, is_admin) -> Blueprint:
     def entry_from_url():
         if request.path != "/":
             return None
-        # Prolific entry: /?PROLIFIC_PID=..&STUDY_ID=..&SESSION_ID=..&spec=.. -> /?sid=<pid>--spec=<spec>--chain=<k>
+        # Prolific entry: /?PROLIFIC_PID=..&STUDY_ID=..&SESSION_ID=..&spec=.. -> /?sid=<pid>--spec=<spec>;
+        # one session per participant and spec, so a new Prolific SESSION_ID resumes the same session
         try:
             ids = prolific_ids(request.args)
         except ValueError as e:
@@ -190,8 +190,7 @@ def make_blueprint(chain: ChainStudy, is_admin) -> Blueprint:
                 abort(404, f"unknown spec {spec!r} (the study URL needs &spec=<spec name>)")
             pid = ids["PROLIFIC_PID"]
             with chain.lock:
-                sid = assign_sid(chain.root, ids, spec, lambda k: f"{pid}--spec={spec}--chain={k}",
-                                 lambda user: chain.used_chains(user, spec))
+                sid = assign_sid(chain.root, ids, spec, lambda k: f"{pid}--spec={spec}", lambda user: [])
             return redirect(f"{request.script_root}/?sid={sid}")
         # Potato's URL login only runs when the browser is not logged in yet, so a participant
         # opening the URL of their next session would land back in the previous one.

@@ -1,7 +1,7 @@
 # Study variables and session specs. One study = one file; a new study gets a new file and study_id.
 # Prolific study URL (one Prolific study per spec):
 #   https://<host>/?PROLIFIC_PID={{%PROLIFIC_PID%}}&STUDY_ID={{%STUDY_ID%}}&SESSION_ID={{%SESSION_ID%}}&spec=<spec name>
-# Test URL, one session:  /?sid=<user_id>--spec=<spec name>--chain=<k>
+# Test URL, one session:  /?sid=<user_id>--spec=<spec name>   (one session per user and spec)
 study_id: dummy_emosent_binary--pilot
 potato_config: config.yaml
 assets_root: ../../assets/stimuli   # shared assets, relative to this folder
@@ -18,8 +18,9 @@ specs:
     graph_name: b=4--emb=spades
     propose_fn: graph/dmcmcp
     propose_params: {p_geom: 0.0, p_jump: 0.1, n_stuck: null}   # null = never
-    n_draw: 20
+    n_draw: 20                     # draws per chain
+    n_chain: 2                     # chains per session, one after the other
     question: Pick the sentence that you think expresses a higher degree of envious emotion than any other emotion.
-    n_attention: 3
-    attention_pass: 3
+    n_attention: 3                 # per chain
+    attention_pass: 3              # per chain
     completion_code: DUMMY123        # Prolific completion code shown at the end

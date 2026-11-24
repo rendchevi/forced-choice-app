@@ -12,9 +12,9 @@ import json
 import sys
 from pathlib import Path
 
-from chain_core import load_study
+from chain_core import load_study, session_files
 
-TRIAL_COLS = ["user_id", "sid", "i_trial", "trial_type", "i_draw", "n_draw", "x_id", "x_star_id", "x_hat_id",
+TRIAL_COLS = ["user_id", "sid", "i_trial", "trial_type", "chain_idx", "i_draw", "n_draw", "n_chain", "x_id", "x_star_id", "x_hat_id",
               "left_id", "chosen_side", "proposal_kind", "n_steps", "n_rejected", "att_id", "correct", "rt_ms", "server_ms", "t_prev", "t_answered"]
 
 
@@ -24,7 +24,7 @@ def main(study_path="sessions.yaml"):
     if not root.is_dir():
         sys.exit(f"no data yet: {root} does not exist")
     sessions, trials = [], []
-    for meta_path in sorted(root.glob("*/*/session.json")):
+    for meta_path in session_files(root):
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         spec = meta.pop("spec")
         meta.pop("asset_sha256")

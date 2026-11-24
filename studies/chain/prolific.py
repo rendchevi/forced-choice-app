@@ -2,9 +2,10 @@
 
 Entry: Prolific opens  /?PROLIFIC_PID=<pid>&STUDY_ID=<id>&SESSION_ID=<id>[&spec=<spec>].
 The server turns that into one of our session ids and redirects to /?sid=<sid>, so the rest of
-the app (Potato's URL login, storage, resume) is unchanged. Each Prolific SESSION_ID gets its
-own session number k (chain=<k> or run=<k>); the same SESSION_ID always maps back to the
-same sid, so a reload resumes.
+the app (Potato's URL login, storage, resume) is unchanged. make_sid decides what a new
+Prolific SESSION_ID gets: typicality gives it its own run number k (run=<k>); the chain study
+ignores k (one session per participant and spec, so it resumes). The same SESSION_ID always
+maps back to the same sid, so a reload resumes.
 
     {root}/{PROLIFIC_PID}/prolific.json   {SESSION_ID: {"PROLIFIC_PID", "STUDY_ID", "SESSION_ID", "scope", "k", "sid", "arrived"}}
 
