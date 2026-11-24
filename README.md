@@ -129,14 +129,16 @@ cd studies/typicality && python run.py        # prepares inputs from study.yaml,
 - **Variables**: `study.yaml` (`study_id`, `stimuli_name`, `question`, `min_value`, `max_value`,
   `left_label`, `right_label`, `completion_code`, host, port). `prepare.py` (run by `run.py`)
   turns it into `config.yaml` and `data/`, both derived and git-ignored: edit `study.yaml`.
-- **Attention checks**: the items of `attention_checks_typicality.json` are added to the data
-  as ordinary rows, so every participant rates all of them, at random positions, with the
-  instruction in the stimulus slot ("move the slider all the way to the RIGHT end") and the
-  usual question above it. Potato grades them (`answer: min|max` becomes the scale's end value)
-  and shows the results in `/admin`. Potato's own injection (`attention_checks.frequency`) is
-  not used: it put injected items into the shared pool, so later participants got extra checks
-  as regular items (2 to 6 per participant in a test).
-  With Potato's defaults a participant is warned after 2 failed checks and stopped after 5.
+- **Order and attention checks**: each participant gets every stimulus, shuffled, and every
+  item of `attention_checks_typicality.json`, spread evenly: check $k$ of $K$ comes after
+  stimulus $\lfloor kn/(K+1) \rfloor$ (`order.py`; seeded by study and `sid`, so reproducible).
+  The instruction sits in the stimulus slot ("move the slider all the way to the RIGHT end")
+  under the usual question. `run.py` assigns the items itself in that order, because Potato
+  hands them out a few at a time in its own order, and Potato's check injection
+  (`attention_checks.frequency`) is not used, because it leaked injected checks to later
+  participants as regular items. Potato still grades the checks (`answer: min|max` becomes the
+  scale's end value) and lists them in `/admin`; nobody is warned or stopped, the researcher
+  decides at manual approval.
 - **Last page**: `templates/done.html` replaces Potato's completion page: thank you, the
   completion code, manual-approval note.
 - **Data**: `annotation_output/<study_id>/<sid>/user_state.json` (Potato's format, includes
