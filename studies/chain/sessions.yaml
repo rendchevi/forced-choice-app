@@ -2,7 +2,7 @@
 # A participant URL names one session:  /?sid=<user_id>--spec=<spec name>--chain=<k>
 study_id: dummy_emosent_binary--pilot
 potato_config: config.yaml
-assets_root: assets/stimuli
+assets_root: ../../assets/stimuli   # shared assets, relative to this folder
 output_root: responses_data
 host: 127.0.0.1
 port: 8100

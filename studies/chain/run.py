@@ -28,6 +28,9 @@ def main(study_path="sessions.yaml"):
     chain = ChainStudy(study, specs)  # loads and checks every spec's assets before the server starts
     # create_app rebinds potato.flask_server.app, so the blueprint goes on the app it returns
     app = create_app(study["potato_config"])
+    # each study has its own cookie: browsers share cookies across ports, so two studies on one
+    # host would otherwise log each other out
+    app.config["SESSION_COOKIE_NAME"] = "session_chain"
     app.register_blueprint(make_blueprint(chain, lambda key: validate_admin_api_key(key, potato_config)))
     logging.getLogger(__name__).info("chain study %s: specs %s, data in %s", chain.study_id, list(specs), chain.root)
     app.run(host=study["host"], port=study["port"], threaded=True, use_reloader=False)

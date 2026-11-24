@@ -1,19 +1,41 @@
 # forced-choice-app
 
-Potato-based app for forced-choice judgement experiments: a participant walks one
-MCMC-with-People style chain (Sanborn & Griffiths, 2008). Each draw shows the current
-reference $x$ and a proposal $x^* = \texttt{propose\_fn}(x)$ side by side in random
-order, the participant picks $\hat{x}$, and $x \leftarrow \hat{x}$.
+Potato-based apps for the human studies of this project. The same participants (same
+`user_id`) take part in both, so the data can be joined per individual.
 
-Potato provides the study shell (URL login, the jsPsych page, a closing page, admin).
-The chain itself is served by `chain_server.py`, which holds all chain state on the
-server: the browser only sends the side chosen and the response time.
+| Study | Folder | Task | Port |
+|---|---|---|---|
+| Forced-choice chain | `studies/chain/` | MCMC-with-People chain of 2AFC choices (custom server + jsPsych) | 8100 |
+| Typicality | `studies/typicality/` | rate every stimulus on a continuous scale (plain Potato) | 8200 |
 
-## Run
+```
+assets/stimuli/<stimuli_name>/       shared by both studies
+  stimuli.csv                        stimulus_id, stimulus, ref_label
+  <graph_name>.json                  networkx node-link graphs (chain proposals)
+  attention_checks_choice.csv        chain: att_id, stimulus_A, stimulus_B, answer (A = left)
+  attention_checks_typicality.json   typicality: [{att_id, stimulus, answer: min|max}]
+studies/chain/                       one folder per study, self-contained
+studies/typicality/
+```
+
+Each study runs as its own server (`conda activate lingu` first: potato-annotation 2.14.0)
+and uses its own cookie name, so both can be open in one browser. A participant URL always
+carries `?sid=...`; opening a URL with a different `sid` logs the previous session out.
+
+## Forced-choice chain (`studies/chain/`)
+
+A participant walks one MCMC-with-People style chain (Sanborn & Griffiths, 2008). Each draw
+shows the current reference $x$ and a proposal $x^* = \texttt{propose\_fn}(x)$ side by side
+in random order, the participant picks $\hat{x}$, and $x \leftarrow \hat{x}$.
+Potato provides the study shell (URL login, the jsPsych page, admin). The chain itself is
+served by `chain_server.py`, which holds all chain state on the server: the browser only
+sends the side chosen and the response time.
+
+### Run
 
 ```bash
 conda activate lingu                       # potato-annotation 2.14.0, networkx, flask
-python run.py                              # reads sessions.yaml; serves on 127.0.0.1:8100
+cd studies/chain && python run.py          # reads sessions.yaml; serves on 127.0.0.1:8100
 ```
 
 Do not use `potato start`: it would not add the `/chain/*` routes.
@@ -32,7 +54,7 @@ Do not use `potato start`: it would not add the `/chain/*` routes.
   into the study's data folder (rewritten each run).
 - **Tests**: `python -m unittest discover -s tests -v`
 
-## Files
+### Files
 
 | Path | Purpose |
 |---|---|
@@ -47,9 +69,8 @@ Do not use `potato start`: it would not add the `/chain/*` routes.
 | `proposal/parametric/` | Reserved for future proposals |
 | `export.py` | Merge all sessions into CSVs |
 | `data/closing.jsonl` | Placeholder item for the required annotation phase |
-| `assets/stimuli/<stimuli_name>/` | `stimuli.csv`, `<graph_name>.json` (networkx node-link), `attention_checks_choice.csv` (chain), `attention_checks_typicality.json` (typicality) |
 
-## A spec
+### A spec
 
 ```yaml
 specs:
@@ -67,13 +88,13 @@ specs:
 
 Everything is loaded and checked at boot, so a bad spec stops the server before anyone arrives.
 
-## Adding a proposal
+### Adding a proposal
 
 Add `proposal/graph/<name>.py` with exactly one subclass of `GraphProposal` that
 implements `propose(self, x, rng)` (all randomness from `rng`, no per-session state) and
 optionally `check(self)` for boot-time warnings. Then use `propose_fn: graph/<name>`.
 
-## Data
+### Data
 
 ```
 responses_data/<study_id>/<user_id>/spec=<spec>--chain=<k>/
@@ -92,3 +113,34 @@ load), a cross-check for `rt_ms` that also contains network jitter.
 
 The seed is a hash of `(study_id, user_id, spec, chain)`, so a session is reproducible
 from its URL and its choices.
+
+## Typicality (`studies/typicality/`)
+
+Every participant rates every stimulus of `stimuli.csv` on a continuous scale
+$[\text{min\_value}, \text{max\_value}]$ (Potato's `vas` scheme), one stimulus per page, in a
+random order per participant. Plain Potato: no custom routes.
+
+```bash
+cd studies/typicality && python run.py        # prepares inputs from study.yaml, serves on 127.0.0.1:8200
+```
+
+- **Participant URL**: `http://127.0.0.1:8200/?sid=<user_id>--chain=<k>`, `k` = repetition
+  (each repetition is a new Potato user with its own random order).
+- **Variables**: `study.yaml` (`study_id`, `stimuli_name`, `question`, `min_value`, `max_value`,
+  `left_label`, `right_label`, `completion_code`, host, port). `prepare.py` (run by `run.py`)
+  turns it into `config.yaml` and `data/`, both derived and git-ignored: edit `study.yaml`.
+- **Attention checks**: the items of `attention_checks_typicality.json` are added to the data
+  as ordinary rows, so every participant rates all of them, at random positions, with the
+  instruction in the stimulus slot ("move the slider all the way to the RIGHT end") and the
+  usual question above it. Potato grades them (`answer: min|max` becomes the scale's end value)
+  and shows the results in `/admin`. Potato's own injection (`attention_checks.frequency`) is
+  not used: it put injected items into the shared pool, so later participants got extra checks
+  as regular items (2 to 6 per participant in a test).
+  With Potato's defaults a participant is warned after 2 failed checks and stopped after 5.
+- **Last page**: `templates/done.html` replaces Potato's completion page: thank you, the
+  completion code, manual-approval note.
+- **Data**: `annotation_output/<study_id>/<sid>/user_state.json` (Potato's format, includes
+  time per item); attention verdicts in `annotation_output/<study_id>/quality_control_results.json`.
+  CSV: `python -m potato.export --config config.yaml --format csv --output ./export/`.
+- **Monitoring**: `http://127.0.0.1:8200/admin` (key in `admin_api_key.txt`, written on the first request to `/admin`).
+- **Tests**: `python -m unittest discover -s tests -v`

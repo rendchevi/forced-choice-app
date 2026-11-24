@@ -23,7 +23,7 @@ from chain_server import ChainStudy, make_blueprint
 from proposal import load_proposal_class
 from proposal.graph.uniform_neighbor import UniformNeighbor
 
-ASSETS = ROOT / "assets" / "stimuli"
+ASSETS = ROOT.parents[1] / "assets" / "stimuli"   # repo-level shared assets
 STIM = "dummy_emosent_binary"
 
 
