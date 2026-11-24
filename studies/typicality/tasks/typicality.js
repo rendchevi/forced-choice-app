@@ -36,16 +36,25 @@ window.potatoTimeline = function (jsPsych, potato) {
     '.typ-q{font-size:clamp(20px,1.7vw,36px);font-weight:600;line-height:1.35;margin:0 auto 2.4vw}' +
     '.typ-stim{font-size:clamp(18px,1.5vw,32px);line-height:1.5;color:#222;text-align:left;' +
     'padding:1.6vw 1.8vw;min-height:6vw;border:1px solid #bbb;border-radius:6px;background:#fff}' +
-    '.typ-scale{margin-top:2.6vw}' +
-    '.typ-range{width:100%;margin:0;height:max(28px,2vw);cursor:pointer;accent-color:#6b5ccf}' +
+    // slider: thin light track, round black thumb, the value floating above the thumb; shorter
+    // than the page so it does not read as a progress bar
+    '.typ-scale{width:min(60vw,1000px);margin:3.2vw auto 0;position:relative;padding-top:2.4em;' +
+    'font-size:clamp(16px,1.2vw,26px)}' +
+    '.typ-range{-webkit-appearance:none;appearance:none;width:100%;margin:0;height:24px;background:none;cursor:pointer}' +
+    '.typ-range:focus{outline:none}' +
+    '.typ-range::-webkit-slider-runnable-track{height:6px;background:#eee;border:1px solid #ccc;border-radius:99px}' +
+    '.typ-range::-moz-range-track{height:6px;background:#eee;border:1px solid #ccc;border-radius:99px}' +
+    '.typ-range::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;margin-top:-8px;' +
+    'border-radius:50%;background:#000;border:0}' +
+    '.typ-range::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:#000;border:0}' +
     '.typ-range.unset::-webkit-slider-thumb{opacity:0}.typ-range.unset::-moz-range-thumb{opacity:0}' +
-    '.typ-labels{display:flex;justify-content:space-between;align-items:baseline;' +
-    'font-size:clamp(14px,1.1vw,24px);color:#555;margin-top:.6vw}' +
-    '.typ-value{font-size:clamp(18px,1.5vw,32px);font-weight:600;color:#222;min-width:4em;text-align:center}' +
-    '.typ-next{font:inherit;font-size:clamp(16px,1.2vw,26px);margin-top:2.2vw;padding:.5em 2.2em;' +
+    '.typ-value{position:absolute;top:0;transform:translateX(-50%);font-size:1.4em;line-height:1;color:#000}' +
+    '.typ-labels{display:flex;justify-content:space-between;color:#555;margin-top:1.4em}' +
+    '.typ-next{font:inherit;font-size:clamp(16px,1.2vw,26px);margin-top:2.2vw;padding:.5em 1.4em;' +
     'border:0;border-radius:6px;background:#6b5ccf;color:#fff;cursor:pointer}' +
     '.typ-next:disabled{background:#c9c4e8;cursor:default}' +
-    '.typ-bar{height:max(6px,0.45vw);background:#e5e5e5;border-radius:99px;overflow:hidden;margin-top:2.6vw}' +
+    '.typ-progress{font-size:clamp(13px,0.95vw,20px);color:#888;text-align:left;margin-bottom:.5em}' +
+    '.typ-bar{height:max(6px,0.45vw);background:#e5e5e5;border-radius:99px;overflow:hidden;margin-bottom:3vw}' +
     '.typ-bar>div{height:100%;width:0;background:#6b5ccf;transition:width 200ms ease-out}' +
     '.typ-fade{animation:typ-fade 120ms ease-out}@keyframes typ-fade{from{opacity:0}to{opacity:1}}' +
     '.typ-end{font-size:clamp(18px,1.5vw,32px);line-height:1.6;max-width:60vw;margin:0 auto}' +
@@ -78,20 +87,23 @@ window.potatoTimeline = function (jsPsych, potato) {
         if (st.done) { finish(st); return; }
         var decimals = (String(st.step).split('.')[1] || '').length;
         root.innerHTML =
-          '<div class="typ"><p class="typ-q"></p><div class="typ-stim"></div>' +
-          '<div class="typ-scale"><input type="range" class="typ-range unset" aria-label="Rating">' +
-          '<div class="typ-labels"><span></span><span class="typ-value"></span><span></span></div></div>' +
-          '<button type="button" class="typ-next" disabled>Next</button>' +
-          '<div class="typ-bar" role="progressbar" aria-label="Progress"><div></div></div></div>';
+          '<div class="typ"><div class="typ-progress"></div>' +
+          '<div class="typ-bar" role="progressbar" aria-label="Progress"><div></div></div>' +
+          '<p class="typ-q"></p><div class="typ-stim"></div>' +
+          '<div class="typ-scale"><span class="typ-value"></span>' +
+          '<input type="range" class="typ-range unset" aria-label="Rating">' +
+          '<div class="typ-labels"><span></span><span></span></div></div>' +
+          '<button type="button" class="typ-next" disabled>Submit</button></div>';
         var stim = root.querySelector('.typ-stim');
         var range = root.querySelector('.typ-range');
         var labels = root.querySelectorAll('.typ-labels span');
+        var progress = root.querySelector('.typ-progress');
         var shown = root.querySelector('.typ-value');
         var next = root.querySelector('.typ-next');
         var bar = root.querySelector('.typ-bar');
         root.querySelector('.typ-q').textContent = st.question;
         labels[0].textContent = st.left_label;
-        labels[2].textContent = st.right_label;
+        labels[1].textContent = st.right_label;
         range.min = st.min_value;
         range.max = st.max_value;
         range.step = st.step;
@@ -105,15 +117,27 @@ window.potatoTimeline = function (jsPsych, potato) {
           return Number((st.min_value + k * st.step).toFixed(decimals));
         }
 
+        function setProgress(j) {
+          var pct = Math.round(100 * j / n);
+          bar.firstChild.style.width = pct + '%';
+          bar.setAttribute('aria-valuenow', pct);
+          progress.textContent = 'Progress ' + pct + '%';
+        }
+
+        function placeValue() {         // keep the number above the thumb (20px wide)
+          var f = (parseFloat(range.value) - st.min_value) / (st.max_value - st.min_value);
+          shown.style.left = 'calc(' + (f * 100) + '% + ' + (10 - 20 * f) + 'px)';
+        }
+
         function show(j) {
           i = j;
           stim.textContent = items[j];
           range.value = (st.min_value + st.max_value) / 2;   // hidden until touched: no anchor
           range.classList.add('unset');
-          shown.textContent = '—';
+          shown.textContent = '';
           next.disabled = true;
           firstTouch = null;
-          bar.firstChild.style.width = (100 * j / n) + '%';
+          setProgress(j);
           stim.classList.remove('typ-fade');
           void stim.offsetWidth;          // restart the fade
           stim.classList.add('typ-fade');
@@ -126,6 +150,7 @@ window.potatoTimeline = function (jsPsych, potato) {
           if (firstTouch === null) { firstTouch = Math.max(0, Math.round(performance.now() - shownAt)); }
           range.classList.remove('unset');
           shown.textContent = snap(parseFloat(range.value)).toFixed(decimals);
+          placeValue();
           next.disabled = false;
         }
         range.addEventListener('input', touched);
@@ -140,7 +165,7 @@ window.potatoTimeline = function (jsPsych, potato) {
           if (next.disabled || ended) { return; }
           var body = {i_trial: i, value: snap(parseFloat(range.value)),
                       rt_ms: Math.max(0, Math.round(performance.now() - shownAt)), first_touch_ms: firstTouch};
-          if (i + 1 < n) { show(i + 1); } else { root.querySelector('.typ').style.visibility = 'hidden'; }
+          if (i + 1 < n) { show(i + 1); } else { setProgress(n); root.querySelector('.typ-scale').style.visibility = 'hidden'; next.disabled = true; }
           queue = queue.then(function () { return call('POST', '/typ/rate', body); })
             .then(handle)
             .catch(function (e) { ended = true; fail(e); });

@@ -41,7 +41,8 @@ window.potatoTimeline = function (jsPsych, potato) {
     'border-radius:6px;cursor:pointer}' +
     '.chain-opt:hover{border-color:#666;background:#fafafa}' +
     '.chain-opt:focus{outline:none}.chain-opt:focus-visible{outline:3px solid #93c5fd}' +
-    '.chain-bar{height:max(6px,0.45vw);background:#e5e5e5;border-radius:99px;overflow:hidden;margin-top:2.6vw}' +
+    '.chain-progress{font-size:clamp(13px,0.95vw,20px);color:#888;text-align:left;margin-bottom:.5em}' +
+    '.chain-bar{height:max(6px,0.45vw);background:#e5e5e5;border-radius:99px;overflow:hidden;margin-bottom:3vw}' +
     '.chain-bar>div{height:100%;width:0;background:#6b5ccf;transition:width 200ms ease-out}' +
     '.chain-end{font-size:clamp(18px,1.5vw,32px);line-height:1.6;max-width:60vw;margin:0 auto}' +
     '.chain-end h2{font-size:1.3em;margin:0 0 1em}' +
@@ -57,13 +58,23 @@ window.potatoTimeline = function (jsPsych, potato) {
     func: function (done) {
       var root = jsPsych.getDisplayElement();
       root.innerHTML =
-        '<div class="chain"><p class="chain-q"></p><div class="chain-pair">' +
+        '<div class="chain"><div class="chain-progress"></div>' +
+        '<div class="chain-bar" role="progressbar" aria-label="Progress"><div></div></div>' +
+        '<p class="chain-q"></p><div class="chain-pair">' +
         '<button type="button" class="chain-opt" data-side="left"></button>' +
         '<button type="button" class="chain-opt" data-side="right"></button>' +
-        '</div><div class="chain-bar" role="progressbar" aria-label="Progress"><div></div></div></div>';
+        '</div></div>';
       var question = root.querySelector('.chain-q');
       var pair = root.querySelector('.chain-pair');
       var bar = root.querySelector('.chain-bar');
+      var progress = root.querySelector('.chain-progress');
+
+      function setProgress(j) {
+        var pct = nTrials ? Math.round(100 * j / nTrials) : 0;
+        bar.firstChild.style.width = pct + '%';
+        bar.setAttribute('aria-valuenow', pct);
+        progress.textContent = 'Progress ' + pct + '%';
+      }
       var button = {left: root.querySelector('[data-side=left]'), right: root.querySelector('[data-side=right]')};
 
       var nTrials = 0;
@@ -93,8 +104,7 @@ window.potatoTimeline = function (jsPsych, potato) {
         shown = t;
         button.left.textContent = t.left;
         button.right.textContent = t.right;
-        bar.firstChild.style.width = (100 * t.i_trial / nTrials) + '%';
-        bar.setAttribute('aria-valuenow', Math.round(100 * t.i_trial / nTrials));
+        setProgress(t.i_trial);
         pair.style.visibility = '';
         pair.classList.remove('chain-fade');
         void pair.offsetWidth;            // restart the fade
@@ -116,7 +126,7 @@ window.potatoTimeline = function (jsPsych, potato) {
         var i = shown.i_trial;
         var next = nextFor[side];
         nextFor = null;
-        if (next) { show(next); } else { pair.style.visibility = 'hidden'; bar.firstChild.style.width = '100%'; }
+        if (next) { show(next); } else { pair.style.visibility = 'hidden'; setProgress(nTrials); }
         call('POST', '/chain/choose', {i_trial: i, side: side, rt_ms: rt}).then(function (reply) {
           if (reply.stale || reply.done || !next || reply.trial.i_trial !== next.i_trial) { sync(reply); return; }
           nextFor = reply.next;
