@@ -1,6 +1,6 @@
 """Proposal functions for the chain.
 
-A config names a proposal as ``"<family>/<name>"``, e.g. ``"graph/uniform_neighbor"``.
+A config names a proposal as ``"<family>/<name>"``, e.g. ``"graph/dmcmcp"``.
 That is the file ``proposal/<family>/<name>.py``, which must define exactly one
 subclass of the class defined in ``proposal/<family>/base.py``.
 """
@@ -17,7 +17,7 @@ def _classes_defined_in(module):
 def load_proposal_class(name: str):
     family, sep, file = name.partition("/")
     if not sep or not family.isidentifier() or not file.isidentifier() or file == "base":
-        raise ValueError(f"propose_fn {name!r} must look like '<family>/<name>', e.g. 'graph/uniform_neighbor'")
+        raise ValueError(f"propose_fn {name!r} must look like '<family>/<name>', e.g. 'graph/dmcmcp'")
     try:
         base_module = importlib.import_module(f"proposal.{family}.base")
         module = importlib.import_module(f"proposal.{family}.{file}")

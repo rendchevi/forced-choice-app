@@ -1,0 +1,5 @@
+/* Potato's own pages (only the consent page is reached): no navigation bar (it shows the participant id
+   and a logout link) and no footer; normal-weight prose (Potato sets phase-page text in a bold legend). */
+nav.potato-navbar, footer.potato-footer { display: none !important; }
+form.pure-display legend { font-weight: 400; }
+form.pure-display legend b, form.pure-display legend h3 { font-weight: 650; }

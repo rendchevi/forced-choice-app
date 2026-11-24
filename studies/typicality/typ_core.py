@@ -17,17 +17,18 @@ import yaml
 
 from order import even_order
 
-# <user_id>--chain=<k>; user_id as in the chain study (single hyphens allowed, never "--")
-SID_RE = re.compile(r"(?P<user>[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*)--chain=(?P<chain>[0-9]{1,6})")
+# <user_id>--run=<k>; user_id as in the chain study (single hyphens allowed, never "--")
+SID_RE = re.compile(r"(?P<user>[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*)--run=(?P<run>[0-9]{1,6})")
 
 STUDY_KEYS = {"study_id", "stimuli_name", "assets_root", "question", "min_value", "max_value", "step",
-              "left_label", "right_label", "completion_code", "potato_config", "output_root", "host", "port"}
+              "left_label", "right_label", "completion_code", "potato_config", "output_root", "host", "port",
+              "threads", "no_consent_code", "abandon_after_min"}
 
 
 def parse_sid(sid: str):
-    """(user_id, chain) from a session id, or None if it is malformed."""
+    """(user_id, run) from a session id, or None if it is malformed."""
     m = SID_RE.fullmatch(sid or "")
-    return (m["user"], int(m["chain"])) if m else None
+    return (m["user"], int(m["run"])) if m else None
 
 
 def load_study(path) -> dict:

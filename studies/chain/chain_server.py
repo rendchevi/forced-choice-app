@@ -5,9 +5,12 @@ never from the request body. Storage, one folder per session:
 
     {output_root}/{study_id}/{user_id}/spec={spec}--chain={k}/session.json   summary, rewritten each trial
     {output_root}/{study_id}/{user_id}/spec={spec}--chain={k}/trials.jsonl   one line per answered trial
+    {output_root}/{study_id}/{user_id}/prolific.json                          Prolific SESSION_ID -> sid (prolific.py)
 """
 
+import csv
 import html
+import io
 import json
 import logging
 import math
@@ -17,10 +20,11 @@ import threading
 import time
 from pathlib import Path
 
-from flask import Blueprint, Response, abort, jsonify, request, session
+from flask import Blueprint, Response, abort, jsonify, redirect, request, session
 
 from chain_core import (SIDES, Session, build_proposal, load_assets, parse_sid,
                         session_seed)
+from prolific import assign_sid, completion_url, ids_for_sid, is_prolific_user, prolific_ids
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +42,8 @@ class ChainStudy:
         self.study_id = study["study_id"]
         self.root = Path(study["output_root"]) / self.study_id
         self.specs = specs
+        self.no_consent_code = study["no_consent_code"]
+        self.abandon_after_s = 60 * study["abandon_after_min"]
         self.assets, self.proposals = {}, {}
         for spec in specs.values():  # load everything at boot so a bad spec fails before anyone arrives
             self.assets[spec.name] = load_assets(study["assets_root"], spec.stimuli_name, spec.graph_name, spec.n_attention)
@@ -45,11 +51,16 @@ class ChainStudy:
             for w in self.proposals[spec.name].check():
                 log.warning("spec %s: %s", spec.name, w)
         self.sessions = {}   # sid -> (Session, meta dict)
-        # shortcut: one lock for all sessions; per-session locks if many hundreds answer at the same moment
+        # guards self.sessions and prolific.json only; each session's answers use its own meta["_lock"],
+        # so the fsync of one session's answer never holds up another session
         self.lock = threading.Lock()
 
     def folder(self, user_id, spec_name, chain) -> Path:
         return self.root / user_id / f"spec={spec_name}--chain={chain}"
+
+    def used_chains(self, user_id, spec_name):
+        """Chain numbers this user already has for this spec (session folders on disk)."""
+        return [int(p.name.rsplit("=", 1)[1]) for p in (self.root / user_id).glob(f"spec={spec_name}--chain=*")]
 
     def get(self, sid):
         """The live session for this sid, created or rebuilt from disk on first use. Caller holds the lock."""
@@ -79,20 +90,24 @@ class ChainStudy:
             (folder / "trials.jsonl").touch()
             meta = {"study_id": self.study_id, "sid": sid, "user_id": user_id, "chain": chain, "seed": seed,
                     "spec": spec.__dict__, "asset_sha256": self.assets[spec_name].sha256,
-                    "status": "in_progress", "started": time.time(), "finished": None,
+                    "prolific": ids_for_sid(self.root, user_id, sid),
+                    "status": "in_progress", "started": time.time(), "updated": None, "finished": None,
                     "n_trials": s.n_trials, "n_trials_done": 0, "n_draw_done": 0,
                     "attention_correct": 0, "attention_done": 0, "attention_passed": None, "median_rt_ms": None}
             records = []
             _write_json_atomic(meta_path, meta)
+        meta["_lock"] = threading.Lock()   # one answer at a time per session; sessions run in parallel
         meta["_rts"] = [r["rt_ms"] for r in records if r["trial_type"] == "chain" and r["rt_ms"] is not None]
         self.sessions[sid] = (s, meta)
         return self.sessions[sid]
 
-    def payload(self, s: Session):
+    def payload(self, s: Session, meta: dict):
         """The trial on screen plus, for each side, the trial it leads to (None = the session ends)."""
         brief = lambda t: None if t is None else {"i_trial": t["i_trial"], "left": t["left_text"], "right": t["right_text"]}
         if s.done:  # the code is only ever sent to a session that has answered every trial
-            return {"done": True, "completion_code": s.spec.completion_code}
+            code = s.spec.completion_code
+            return {"done": True, "completion_code": code,
+                    "redirect_url": completion_url(code) if meta.get("prolific") and code else None}
         return {"done": False, "n_trials": s.n_trials, "question": s.spec.question,
                 "trial": brief(s.pending), "next": {side: brief(t) for side, t in s.peek().items()}}
 
@@ -112,6 +127,7 @@ class ChainStudy:
             f.flush()
             os.fsync(f.fileno())
         meta["n_trials_done"] += 1
+        meta["updated"] = now
         if rec["trial_type"] == "chain":
             meta["n_draw_done"] += 1
             if rt_ms is not None:
@@ -126,15 +142,29 @@ class ChainStudy:
         _write_json_atomic(folder / "session.json", {k: v for k, v in meta.items() if not k.startswith("_")})
 
     def summaries(self):
-        rows = []
+        rows, now = [], time.time()
         for p in sorted(self.root.glob("*/*/session.json")):  # shortcut: scans files per request; index if slow
             m = json.loads(p.read_text(encoding="utf-8"))
-            rows.append({"user_id": m["user_id"], "spec": m["spec"]["name"], "chain": m["chain"], "status": m["status"],
+            last = m.get("updated") or m["started"]
+            pro = m.get("prolific") or {}
+            rows.append({"state": _state(m, now - last > self.abandon_after_s),
+                         "user_id": m["user_id"], "spec": m["spec"]["name"], "chain": m["chain"],
                          "draws": f'{m["n_draw_done"]}/{m["spec"]["n_draw"]}',
                          "attention": f'{m["attention_correct"]}/{m["attention_done"]} (need {m["spec"]["attention_pass"]}/{m["spec"]["n_attention"]})',
-                         "attention_passed": m["attention_passed"], "median_rt_ms": m["median_rt_ms"],
-                         "started": _fmt_time(m["started"]), "finished": _fmt_time(m["finished"]), "sid": m["sid"]})
+                         "median_rt_ms": m["median_rt_ms"],
+                         "duration_min": round(((m["finished"] or last) - m["started"]) / 60, 1),
+                         "started": _fmt_time(m["started"]), "last_activity": _fmt_time(last),
+                         "finished": _fmt_time(m["finished"]),
+                         "prolific_study_id": pro.get("STUDY_ID", ""), "prolific_session_id": pro.get("SESSION_ID", ""),
+                         "sid": m["sid"]})
         return rows
+
+
+def _state(m, idle) -> str:
+    """pass / fail (finished, attention passed or not), running, abandoned (no answer for abandon_after_min)."""
+    if m["status"] == "complete":
+        return "pass" if m["attention_passed"] else "fail"
+    return "abandoned" if idle else "running"
 
 
 def _fmt_time(t):
@@ -146,13 +176,39 @@ def make_blueprint(chain: ChainStudy, is_admin) -> Blueprint:
     bp = Blueprint("chain", __name__)
 
     @bp.before_app_request
-    def switch_session_from_url():
+    def entry_from_url():
+        if request.path != "/":
+            return None
+        # Prolific entry: /?PROLIFIC_PID=..&STUDY_ID=..&SESSION_ID=..&spec=.. -> /?sid=<pid>--spec=<spec>--chain=<k>
+        try:
+            ids = prolific_ids(request.args)
+        except ValueError as e:
+            abort(400, str(e))
+        if ids:
+            spec = request.args.get("spec", "")
+            if spec not in chain.specs:
+                abort(404, f"unknown spec {spec!r} (the study URL needs &spec=<spec name>)")
+            pid = ids["PROLIFIC_PID"]
+            with chain.lock:
+                sid = assign_sid(chain.root, ids, spec, lambda k: f"{pid}--spec={spec}--chain={k}",
+                                 lambda user: chain.used_chains(user, spec))
+            return redirect(f"{request.script_root}/?sid={sid}")
         # Potato's URL login only runs when the browser is not logged in yet, so a participant
         # opening the URL of their next session would land back in the previous one.
         # A different ?sid= on the landing page therefore logs the old session out first.
         sid = request.args.get("sid")
-        if request.path == "/" and sid and session.get("username") not in (None, sid):
+        if sid and session.get("username") not in (None, sid):
             session.clear()
+        return None
+
+    @bp.app_context_processor
+    def exit_link():
+        # templates/done.html is only reached by declining consent; Prolific participants go back
+        # to Prolific with the no-consent code
+        parsed = parse_sid(session.get("username") or "")
+        if parsed and is_prolific_user(parsed[0]) and chain.no_consent_code:
+            return {"exit_url": completion_url(chain.no_consent_code)}
+        return {}
 
     def current_sid():
         sid = session.get("username")
@@ -165,8 +221,9 @@ def make_blueprint(chain: ChainStudy, is_admin) -> Blueprint:
         sid = current_sid()
         with chain.lock:
             s, meta = chain.get(sid)
+        with meta["_lock"]:
             meta["_prev"] = time.time()  # page (re)load: the participant's clock restarts too
-            return jsonify(chain.payload(s))
+            return jsonify(chain.payload(s, meta))
 
     @bp.post("/chain/choose")
     def choose():
@@ -179,26 +236,25 @@ def make_blueprint(chain: ChainStudy, is_admin) -> Blueprint:
             abort(400, "rt_ms must be a number of milliseconds")
         with chain.lock:
             s, meta = chain.get(sid)
+        with meta["_lock"]:
             if s.done or i_trial != s.pending["i_trial"]:
                 # stale or repeated answer (double click, second tab): ignore it and resend the current state
-                resp = chain.payload(s)
+                resp = chain.payload(s, meta)
                 resp["stale"] = True
                 return jsonify(resp), 409
             chain.record(sid, s, meta, side, rt_ms)
-            return jsonify(chain.payload(s))
+            return jsonify(chain.payload(s, meta))
 
-    def require_admin():
+    def admin_rows():
         if not is_admin(request.args.get("key")):
             abort(403, "admin key required: ?key=<contents of admin_api_key.txt>")
+        return filter_rows(chain.summaries(), request.args)
 
     @bp.get("/chain/admin.csv")
     def admin_csv():
-        require_admin()
-        import csv
-        import io
-        rows = chain.summaries()
+        rows = admin_rows()
         buf = io.StringIO()
-        w = csv.DictWriter(buf, fieldnames=list(rows[0]) if rows else ["user_id"])
+        w = csv.DictWriter(buf, fieldnames=list(rows[0]) if rows else ["state"])
         w.writeheader()
         w.writerows(rows)
         return Response(buf.getvalue(), mimetype="text/csv",
@@ -206,33 +262,58 @@ def make_blueprint(chain: ChainStudy, is_admin) -> Blueprint:
 
     @bp.get("/chain/admin")
     def admin():
-        require_admin()
-        rows = chain.summaries()
-        cols = list(rows[0]) if rows else []
-        head = "".join(f"<th>{html.escape(c)}</th>" for c in cols)
-        body = "".join(
-            f'<tr data-state="{_state(r)}">' + "".join(f"<td>{html.escape('' if r[c] is None else str(r[c]))}</td>" for c in cols) + "</tr>"
-            for r in rows)
-        key = html.escape(request.args.get("key", ""), quote=True)
-        return ADMIN_HTML.format(study=html.escape(chain.study_id), n=len(rows), head=head, body=body, key=key)
+        rows = admin_rows()
+        return admin_page(f"Chain study {chain.study_id}", "/chain/admin", rows, chain.summaries(), request.args)
 
     return bp
 
 
-def _state(r):
-    if r["status"] != "complete":
-        return "running"
-    return "pass" if r["attention_passed"] else "fail"
+# ---------------------------------------------------------------- monitoring page
+
+STATES = ("running", "abandoned", "pass", "fail")
 
 
-ADMIN_HTML = """<!doctype html><html><head><meta charset="utf-8"><title>Chain sessions</title>
+def filter_rows(rows, args):
+    """Rows matching ?state=..&q=..&study=.. (q: substring of user_id or sid; study: Prolific STUDY_ID)."""
+    state, q, study = args.get("state", ""), args.get("q", "").strip().lower(), args.get("study", "")
+    return [r for r in rows
+            if (not state or r["state"] == state)
+            and (not q or q in r["user_id"].lower() or q in r["sid"].lower())
+            and (not study or r["prolific_study_id"] == study)]
+
+
+def admin_page(title, path, rows, all_rows, args):
+    esc = lambda v: html.escape("" if v is None else str(v), quote=True)
+    cols = list(rows[0]) if rows else []
+    counts = {s: sum(r["state"] == s for r in all_rows) for s in STATES}
+    state, q, study, refresh = args.get("state", ""), args.get("q", ""), args.get("study", ""), args.get("refresh", "")
+    opt = lambda v, label, cur: f'<option value="{esc(v)}"{" selected" if v == cur else ""}>{esc(label)}</option>'
+    studies = sorted({r["prolific_study_id"] for r in all_rows if r["prolific_study_id"]})
+    query = "&".join(f"{k}={esc(args.get(k, ''))}" for k in ("key", "state", "q", "study"))
+    return ADMIN_HTML.format(
+        title=esc(title), path=path, key=esc(args.get("key", "")), query=query,
+        refresh_meta='<meta http-equiv="refresh" content="30">' if refresh else "",
+        counts=" · ".join(f"{s}: {counts[s]}" for s in STATES), n=len(rows), n_all=len(all_rows),
+        state_opts=opt("", "all", state) + "".join(opt(s, s, state) for s in STATES),
+        study_opts=opt("", "all", study) + "".join(opt(s, s, study) for s in studies),
+        q=esc(q), checked=" checked" if refresh else "",
+        head="".join(f"<th>{esc(c)}</th>" for c in cols),
+        body="".join(f'<tr data-state="{esc(r["state"])}">' + "".join(f"<td>{esc(r[c])}</td>" for c in cols) + "</tr>"
+                     for r in rows))
+
+
+ADMIN_HTML = """<!doctype html><html><head><meta charset="utf-8"><title>{title}</title>{refresh_meta}
 <style>body{{font:14px system-ui,sans-serif;margin:16px}}table{{border-collapse:collapse}}
-td,th{{border:1px solid #ccc;padding:4px 8px;text-align:left}}tr[data-state=fail]{{background:#fde2e2}}
-tr[data-state=pass]{{background:#e3f6e3}}tr[data-state=running]{{background:#fff7d6}}</style></head><body>
-<h2>Study {study}: {n} sessions</h2>
-<p>Show: <select id="f"><option value="">all</option><option>pass</option><option>fail</option><option>running</option></select>
-&nbsp;<a href="/chain/admin.csv?key={key}">download CSV</a> &nbsp;Approve/reject on Prolific: <a href="/admin">Potato admin</a></p>
+td,th{{border:1px solid #ccc;padding:4px 8px;text-align:left;white-space:nowrap}}form>*{{margin-right:10px}}
+tr[data-state=fail]{{background:#fde2e2}}tr[data-state=pass]{{background:#e3f6e3}}
+tr[data-state=running]{{background:#fff7d6}}tr[data-state=abandoned]{{background:#eee;color:#777}}</style></head><body>
+<h2>{title}</h2>
+<p>{counts} &nbsp;(showing {n} of {n_all})</p>
+<form method="get" action="{path}"><input type="hidden" name="key" value="{key}">
+<label>State <select name="state" onchange="this.form.submit()">{state_opts}</select></label>
+<label>Prolific study <select name="study" onchange="this.form.submit()">{study_opts}</select></label>
+<label>Search PID / sid <input name="q" value="{q}" size="28"></label>
+<label><input type="checkbox" name="refresh" value="1"{checked} onchange="this.form.submit()"> auto-refresh (30 s)</label>
+<button>Apply</button> <a href="{path}.csv?{query}">download CSV (these rows)</a></form>
 <table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>
-<script>document.getElementById('f').onchange=function(e){{var v=e.target.value;
-document.querySelectorAll('tbody tr').forEach(function(r){{r.style.display=!v||r.dataset.state===v?'':'none';}});}};</script>
 </body></html>"""

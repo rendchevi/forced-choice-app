@@ -15,20 +15,21 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import networkx as nx
-from flask import Flask, session
+from flask import Flask, render_template_string, session
 
 from chain_core import (Session, Spec, attention_after, load_assets, parse_sid,
                         session_seed)
 from chain_server import ChainStudy, make_blueprint
+from prolific import prolific_ids
 from proposal import load_proposal_class
-from proposal.graph.uniform_neighbor import UniformNeighbor
+from proposal.graph.dmcmcp import DMCMCP
 
 ASSETS = ROOT.parents[1] / "assets" / "stimuli"   # repo-level shared assets
 STIM = "dummy_emosent_binary"
 
 
 def spec(**kw):
-    base = dict(name="t", stimuli_name=STIM, graph_name="b=4--emb=spades", propose_fn="graph/uniform_neighbor",
+    base = dict(name="t", stimuli_name=STIM, graph_name="b=4--emb=spades", propose_fn="graph/dmcmcp",
                 n_draw=20, question="q?", n_attention=3, attention_pass=3)
     return Spec(**{**base, **kw})
 
@@ -36,40 +37,105 @@ def spec(**kw):
 def new_session(seed=1, **kw):
     sp = spec(**kw)
     assets = load_assets(ASSETS, sp.stimuli_name, sp.graph_name, sp.n_attention)
-    return Session(sp, assets, UniformNeighbor(assets.graph), seed)
+    return Session(sp, assets, DMCMCP(assets.graph, **sp.propose_params), seed)
+
+
+def freq(p, x, n=20000, n_rejected=0, seed=0):
+    rng = random.Random(seed)
+    return Counter(p.propose(x, rng, n_rejected)[0] for _ in range(n))
 
 
 class TestProposal(unittest.TestCase):
     def test_registry_finds_the_subclass(self):
-        self.assertIs(load_proposal_class("graph/uniform_neighbor"), UniformNeighbor)
+        self.assertIs(load_proposal_class("graph/dmcmcp"), DMCMCP)
 
     def test_registry_rejects_bad_names(self):
-        for bad in ["uniform_neighbor", "graph/base", "graph/nope", "../x/y", "graph/a.b"]:
+        for bad in ["dmcmcp", "graph/base", "graph/nope", "../x/y", "graph/a.b"]:
             with self.assertRaises(ValueError, msg=bad):
                 load_proposal_class(bad)
 
-    def test_proposes_a_neighbour_deterministically(self):
+    def test_deterministic_and_never_x(self):
         g = nx.random_regular_graph(4, 20, seed=0)
-        p = UniformNeighbor(g)
-        a = [p.propose(x, random.Random(7)) for x in g.nodes]
-        b = [p.propose(x, random.Random(7)) for x in g.nodes]
-        self.assertEqual(a, b)
-        self.assertTrue(all(g.has_edge(x, y) for x, y in zip(g.nodes, a)))
+        p = DMCMCP(g, p_geom=0.6, p_jump=0.2)
+        a = [p.propose(x, random.Random(7), 0) for x in g.nodes]
+        self.assertEqual(a, [p.propose(x, random.Random(7), 0) for x in g.nodes])
+        rng = random.Random(1)
+        self.assertTrue(all(p.propose(x, rng, 0)[0] != x for x in g.nodes for _ in range(200)))
 
-    def test_uniform_over_neighbours(self):
-        g = nx.cycle_graph(6)
-        rng = random.Random(0)
-        counts = Counter(UniformNeighbor(g).propose(0, rng) for _ in range(4000))
-        self.assertEqual(set(counts), {1, 5})
-        self.assertLess(abs(counts[1] - 2000), 200)
+    def test_p_geom_0_is_uniform_neighbour(self):
+        p = DMCMCP(nx.cycle_graph(6))
+        c = freq(p, 0, n=4000)
+        self.assertEqual(set(c), {1, 5})
+        self.assertLess(abs(c[1] - 2000), 200)
+        self.assertEqual(p.propose(0, random.Random(0), 0)[1], {"proposal_kind": "walk", "n_steps": 1})
 
-    def test_checks(self):
-        self.assertEqual(UniformNeighbor(nx.cycle_graph(5)).check(), [])
-        self.assertTrue(UniformNeighbor(nx.path_graph(4)).check())  # not regular -> warning
+    def test_walk_matches_exact_q(self):
+        # Q = (1 - p) P (I - p P)^-1, then the walk is redrawn when it ends at x
+        import numpy as np
+        g, pg, n = nx.random_regular_graph(3, 10, seed=2), 0.5, 40000
+        nodes = sorted(g)
+        P = nx.to_numpy_array(g, nodelist=nodes)
+        P /= P.sum(1, keepdims=True)
+        Q = (1 - pg) * P @ np.linalg.inv(np.eye(len(nodes)) - pg * P)
+        q = Q[0] / (1 - Q[0, 0])
+        q[0] = 0
+        c = freq(DMCMCP(g, p_geom=pg), nodes[0], n=n)
+        emp = np.array([c[v] / n for v in nodes])
+        self.assertLess(np.abs(emp - q).max(), 4 * np.sqrt(q.max() / n))
+        rng = random.Random(3)
+        steps = [DMCMCP(g, p_geom=pg).propose(0, rng, 0)[1]["n_steps"] for _ in range(20000)]
+        self.assertGreater(np.mean(steps), 1.8)   # 1/(1-p) = 2 before the redraw (redraws favour longer walks slightly)
+
+    def test_jump_frequency_and_support(self):
+        g = nx.cycle_graph(12)
+        rng = random.Random(4)
+        kinds = Counter(DMCMCP(g, p_jump=0.3).propose(0, rng, 0)[1]["proposal_kind"] for _ in range(20000))
+        self.assertLess(abs(kinds["jump"] / 20000 - 0.3), 0.02)
+        c = freq(DMCMCP(g, p_jump=1.0), 0, n=22000)
+        self.assertEqual(set(c), set(range(1, 12)))           # X \ {x}, every other node
+        self.assertLess(max(c.values()) - min(c.values()), 400)
+
+    def test_stuck_after_every_n_stuck_rejections(self):
+        p = DMCMCP(nx.cycle_graph(12), n_stuck=3)
+        kind = lambda k: p.propose(0, random.Random(k), k)[1]["proposal_kind"]
+        self.assertEqual([kind(k) for k in range(8)], ["walk", "walk", "walk", "stuck", "walk", "walk", "stuck", "walk"])
+        self.assertEqual(DMCMCP(nx.cycle_graph(12)).propose(0, random.Random(0), 99)[1]["proposal_kind"], "walk")
+
+    def test_bad_params_and_checks(self):
+        for kw in [{"p_geom": 1.0}, {"p_geom": -0.1}, {"p_jump": 1.5}, {"n_stuck": 0}, {"n_stuck": 2.5}]:
+            with self.assertRaises(ValueError, msg=kw):
+                DMCMCP(nx.cycle_graph(5), **kw)
         g = nx.Graph()
         g.add_nodes_from([1, 2])
         with self.assertRaises(ValueError):
-            UniformNeighbor(g)  # isolated nodes
+            DMCMCP(g)                                           # isolated nodes
+        self.assertEqual(DMCMCP(nx.cycle_graph(5)).check(), [])
+        self.assertEqual(len(DMCMCP(nx.path_graph(4), n_stuck=2).check()), 2)  # not regular + history-dependent
+
+
+class TestRejectionCount(unittest.TestCase):
+    def test_session_counts_rejections_and_triggers_stuck(self):
+        s = new_session(seed=5, propose_params={"p_geom": 0.0, "p_jump": 0.0, "n_stuck": 2}, n_attention=0, attention_pass=0)
+        kinds = []
+        while not s.done:
+            t = s.pending
+            kinds.append((t["n_rejected"], t["proposal_kind"]))
+            s.choose("left" if t["left_id"] == t["x_id"] else "right")   # always keep x
+        self.assertEqual(kinds[:5], [(0, "walk"), (1, "walk"), (2, "stuck"), (3, "walk"), (4, "stuck")])
+
+    def test_acceptance_resets_and_peek_restores(self):
+        s = new_session(seed=6, propose_params={"p_geom": 0.3, "p_jump": 0.1, "n_stuck": 3})
+        while not s.done:
+            t = s.pending
+            ahead = s.peek()
+            side = "right" if t["i_trial"] % 3 else "left"
+            rec = s.choose(side)
+            self.assertEqual(s.pending, ahead[side])
+            if t["trial_type"] == "chain":
+                self.assertEqual((rec["proposal_kind"], rec["n_rejected"]), (t["proposal_kind"], t["n_rejected"]))
+                if s.pending and s.pending["trial_type"] == "chain":
+                    want = t["n_rejected"] + 1 if rec["x_hat_id"] == rec["x_id"] else 0
+                    self.assertEqual(s.pending["n_rejected"], want)
 
 
 class TestCore(unittest.TestCase):
@@ -151,7 +217,8 @@ class TestCore(unittest.TestCase):
 class TestServer(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        study = {"study_id": "test", "output_root": self.tmp.name, "assets_root": str(ASSETS)}
+        study = {"study_id": "test", "output_root": self.tmp.name, "assets_root": str(ASSETS),
+                 "no_consent_code": "NOC", "abandon_after_min": 30}
         self.specs = {"s": spec(name="s", n_draw=4, n_attention=1, attention_pass=1, completion_code="CODE1")}
         self.chain = ChainStudy(study, self.specs)
         self.app = Flask(__name__)
@@ -213,7 +280,8 @@ class TestServer(unittest.TestCase):
         t = self.client.get("/chain/next").get_json()
         self.assertNotIn("completion_code", t)
         self.run_session("u4--spec=s--chain=1")
-        self.assertEqual(self.client.get("/chain/next").get_json(), {"done": True, "completion_code": "CODE1"})
+        self.assertEqual(self.client.get("/chain/next").get_json(),
+                         {"done": True, "completion_code": "CODE1", "redirect_url": None})  # test link: no Prolific
 
     def test_bad_input_and_stale_answer(self):
         self.login("u1--spec=s--chain=1")
@@ -256,6 +324,72 @@ class TestServer(unittest.TestCase):
         self.assertIn(b"u1--spec=s--chain=1", page.data)
         csv_text = self.client.get("/chain/admin.csv?key=k").data.decode()
         self.assertEqual(len(csv_text.strip().splitlines()), 2)
+
+    def test_admin_states_and_filters(self):
+        self.run_session("u1--spec=s--chain=1")                     # pass (attention item answered left = correct?)
+        self.login("u2--spec=s--chain=1")
+        self.client.get("/chain/next")                              # started, no answer yet
+        self.login("u3--spec=s--chain=1")
+        self.client.get("/chain/next")
+        meta = Path(self.tmp.name) / "test" / "u3" / "spec=s--chain=1" / "session.json"
+        m = json.loads(meta.read_text())
+        m["started"] -= 3600                                        # idle for an hour
+        meta.write_text(json.dumps(m))
+        states = {r["user_id"]: r["state"] for r in self.chain.summaries()}
+        self.assertEqual(states["u2"], "running")
+        self.assertEqual(states["u3"], "abandoned")
+        self.assertIn(states["u1"], ("pass", "fail"))
+        csv_rows = lambda q: self.client.get("/chain/admin.csv?key=k" + q).data.decode().strip().splitlines()[1:]
+        self.assertEqual(len(csv_rows("&state=abandoned")), 1)
+        self.assertEqual(len(csv_rows("&q=U2")), 1)                 # search is case-insensitive
+        self.assertEqual(len(csv_rows("&study=" + "a" * 24)), 0)
+
+
+PID, STUDY, SESS1, SESS2 = "a" * 24, "b" * 24, "c" * 24, "d" * 24
+
+
+class TestProlific(unittest.TestCase):
+    setUp, tearDown, login, run_session = TestServer.setUp, TestServer.tearDown, TestServer.login, TestServer.run_session
+
+    def enter(self, session_id=SESS1, spec="s", pid=PID):
+        return self.client.get(f"/?PROLIFIC_PID={pid}&STUDY_ID={STUDY}&SESSION_ID={session_id}&spec={spec}")
+
+    def test_ids(self):
+        self.assertIsNone(prolific_ids({}))
+        self.assertEqual(prolific_ids({"PROLIFIC_PID": PID, "STUDY_ID": STUDY, "SESSION_ID": SESS1})["SESSION_ID"], SESS1)
+        for bad in [{"PROLIFIC_PID": PID}, {"PROLIFIC_PID": "x" * 24, "STUDY_ID": STUDY, "SESSION_ID": SESS1},
+                    {"PROLIFIC_PID": PID + "0", "STUDY_ID": STUDY, "SESSION_ID": SESS1}]:
+            with self.assertRaises(ValueError):
+                prolific_ids(bad)
+
+    def test_entry_assigns_and_resumes_chains(self):
+        r = self.enter()
+        self.assertEqual((r.status_code, r.location), (302, f"/?sid={PID}--spec=s--chain=1"))
+        self.assertEqual(self.enter().location, f"/?sid={PID}--spec=s--chain=1")       # same Prolific session: resume
+        self.assertEqual(self.enter(SESS2).location, f"/?sid={PID}--spec=s--chain=2")  # new Prolific session: new chain
+        self.assertEqual(self.enter(spec="nope").status_code, 404)
+        self.assertEqual(self.enter(pid="nothex").status_code, 400)
+
+    def test_entry_skips_chains_used_by_test_links(self):
+        self.run_session(f"{PID}--spec=s--chain=1")
+        self.assertEqual(self.enter().location, f"/?sid={PID}--spec=s--chain=2")
+
+    def test_ids_stored_and_redirect_at_the_end(self):
+        sid = self.enter().location.split("sid=")[1]
+        self.run_session(sid)
+        meta = json.loads((Path(self.tmp.name) / "test" / PID / "spec=s--chain=1" / "session.json").read_text())
+        self.assertEqual(meta["prolific"], {"PROLIFIC_PID": PID, "STUDY_ID": STUDY, "SESSION_ID": SESS1})
+        self.assertEqual(self.client.get("/chain/next").get_json()["redirect_url"],
+                         "https://app.prolific.com/submissions/complete?cc=CODE1")
+        self.assertEqual(self.chain.summaries()[0]["prolific_study_id"], STUDY)
+
+    def test_no_consent_exit_link(self):
+        page = "{{ exit_url | default('') }}"
+        with self.app.test_request_context("/"):
+            session["username"] = f"{PID}--spec=s--chain=1"
+            self.assertEqual(render_template_string(page), "https://app.prolific.com/submissions/complete?cc=NOC")
+            session["username"] = "u1--spec=s--chain=1"
+            self.assertEqual(render_template_string(page), "")
 
 
 if __name__ == "__main__":

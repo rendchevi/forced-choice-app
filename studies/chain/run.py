@@ -2,7 +2,8 @@
 
     python run.py [sessions.yaml]
 
-Participant URL:  http://<host>:<port>/?sid=<user_id>--spec=<spec>--chain=<k>
+Prolific URL:     http://<host>:<port>/?PROLIFIC_PID=<pid>&STUDY_ID=<id>&SESSION_ID=<id>&spec=<spec>
+Test URL:         http://<host>:<port>/?sid=<user_id>--spec=<spec>--chain=<k>
 Monitoring:       http://<host>:<port>/chain/admin?key=<contents of admin_api_key.txt>
 """
 
@@ -17,6 +18,7 @@ ROOT = Path(__file__).resolve().parent
 def main(study_path="sessions.yaml"):
     os.chdir(ROOT)  # Potato resolves task_dir and every path in config.yaml from here
     sys.path.insert(0, str(ROOT))
+    from jinja2 import ChoiceLoader, FileSystemLoader
     from potato.flask_server import create_app
     from potato.server_utils.admin_key import validate_admin_api_key
     from potato.server_utils.config_module import config as potato_config
@@ -31,9 +33,13 @@ def main(study_path="sessions.yaml"):
     # each study has its own cookie: browsers share cookies across ports, so two studies on one
     # host would otherwise log each other out
     app.config["SESSION_COOKIE_NAME"] = "session_chain"
+    # templates/done.html replaces Potato's completion page, which only declining consent reaches
+    app.jinja_env.loader = ChoiceLoader([FileSystemLoader(str(ROOT / "templates")), app.jinja_env.loader])
     app.register_blueprint(make_blueprint(chain, lambda key: validate_admin_api_key(key, potato_config)))
     logging.getLogger(__name__).info("chain study %s: specs %s, data in %s", chain.study_id, list(specs), chain.root)
-    app.run(host=study["host"], port=study["port"], threaded=True, use_reloader=False)
+    from waitress import serve
+    # one process, many threads: all session state lives in this process's memory
+    serve(app, host=study["host"], port=study["port"], threads=study["threads"])
 
 
 if __name__ == "__main__":

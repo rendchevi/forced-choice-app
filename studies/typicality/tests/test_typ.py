@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from flask import Flask, session
+from flask import Flask, render_template_string, session
 
 from typ_core import Session, load_assets, load_study, parse_sid
 from typ_server import TypStudy, make_blueprint
@@ -17,10 +17,11 @@ from typ_server import TypStudy, make_blueprint
 ASSETS = ROOT.parents[1] / "assets" / "stimuli"   # repo-level shared assets
 STUDY = {"study_id": "test", "stimuli_name": "dummy_emosent_binary", "assets_root": str(ASSETS),
          "question": "q?", "min_value": 0, "max_value": 100, "step": 1, "left_label": "lo", "right_label": "hi",
-         "completion_code": "CODE9", "potato_config": "config.yaml", "output_root": "", "host": "x", "port": 0}
+         "completion_code": "CODE9", "potato_config": "config.yaml", "output_root": "", "host": "x", "port": 0,
+         "threads": 1, "no_consent_code": "NOC", "abandon_after_min": 30}
 
 
-def new_session(sid="u1--chain=1", **kw):
+def new_session(sid="u1--run=1", **kw):
     st = {**STUDY, **kw}
     return Session(st, load_assets(st["assets_root"], st["stimuli_name"]), sid)
 
@@ -48,8 +49,8 @@ class TestCore(unittest.TestCase):
                     load_study(p)
 
     def test_parse_sid(self):
-        self.assertEqual(parse_sid("u-1_a--chain=2"), ("u-1_a", 2))
-        for bad in ["u1", "u1--chain=x", "u--x--chain=1", "u1--chain=1\n", "../u--chain=1", "u1--spec=a--chain=1"]:
+        self.assertEqual(parse_sid("u-1_a--run=2"), ("u-1_a", 2))
+        for bad in ["u1", "u1--run=x", "u--x--run=1", "u1--run=1\n", "../u--run=1", "u1--spec=a--run=1"]:
             self.assertIsNone(parse_sid(bad), bad)
 
     def test_every_item_once_attention_spread(self):
@@ -59,7 +60,7 @@ class TestCore(unittest.TestCase):
         self.assertEqual(kinds.count("attention"), 6)
         before = [kinds[:i].count("stimulus") for i, k in enumerate(kinds) if k == "attention"]
         self.assertEqual(before, [3, 6, 9, 13, 16, 19])
-        self.assertNotEqual([it["text"] for it in s.items], [it["text"] for it in new_session("u2--chain=1").items])
+        self.assertNotEqual([it["text"] for it in s.items], [it["text"] for it in new_session("u2--run=1").items])
 
     def test_values_checked(self):
         s = new_session(step=0.5)
@@ -86,7 +87,7 @@ class TestCore(unittest.TestCase):
         b.replay(recs)
         self.assertEqual(b.i_trial, 7)
         with self.assertRaises(ValueError):
-            new_session("u2--chain=1").replay(recs)   # another order
+            new_session("u2--run=1").replay(recs)   # another order
 
 
 class TestServer(unittest.TestCase):
@@ -106,7 +107,7 @@ class TestServer(unittest.TestCase):
         with self.client.session_transaction() as sess:
             sess["username"] = sid
 
-    def rate_all(self, sid="u1--chain=1"):
+    def rate_all(self, sid="u1--run=1"):
         self.login(sid)
         st = self.client.get("/typ/start").get_json()
         s = self.typ.sessions[sid][0]
@@ -124,34 +125,35 @@ class TestServer(unittest.TestCase):
 
     def test_full_session(self):
         last = self.rate_all()
-        self.assertEqual(last, {"done": True, "i_trial": 29, "completion_code": "CODE9"})
-        folder = Path(self.tmp.name) / "test" / "u1" / "chain=1"
+        self.assertEqual(last, {"done": True, "i_trial": 29, "completion_code": "CODE9", "redirect_url": None})
+        folder = Path(self.tmp.name) / "test" / "u1" / "run=1"
         meta = json.loads((folder / "session.json").read_text())
         self.assertEqual((meta["status"], meta["n_trials_done"], meta["attention_correct"], meta["attention_total"]),
                          ("complete", 29, 6, 6))
         self.assertEqual(len((folder / "trials.jsonl").read_text().splitlines()), 29)
-        self.assertEqual(self.client.get("/typ/start").get_json(), {"done": True, "completion_code": "CODE9"})
+        self.assertEqual(self.client.get("/typ/start").get_json(),
+                         {"done": True, "completion_code": "CODE9", "redirect_url": None})  # test link: no Prolific
 
     def test_code_only_when_done(self):
-        self.login("u1--chain=1")
+        self.login("u1--run=1")
         self.assertNotIn("completion_code", self.client.get("/typ/start").get_json())
 
     def test_bad_input_and_stale(self):
-        self.login("u1--chain=1")
+        self.login("u1--run=1")
         self.client.get("/typ/start")
         for body in [{"i_trial": 0, "value": 101}, {"i_trial": 0, "value": "5"}, {"i_trial": "0", "value": 5},
                      {"i_trial": 0, "value": 5, "rt_ms": -1}, {"i_trial": 0, "value": 5, "first_touch_ms": "x"}]:
             self.assertEqual(self.client.post("/typ/rate", json=body).status_code, 400, body)
-        s = self.typ.sessions["u1--chain=1"][0]
+        s = self.typ.sessions["u1--run=1"][0]
         ok = {"i_trial": 0, "value": answer(s, s.items[0]), "rt_ms": 5, "first_touch_ms": None}
         self.assertEqual(self.client.post("/typ/rate", json=ok).status_code, 200)
         again = self.client.post("/typ/rate", json=ok)                  # double click
         self.assertEqual((again.status_code, again.get_json()["i_trial"]), (409, 1))
 
     def test_resume_after_restart(self):
-        self.login("u2--chain=1")
+        self.login("u2--run=1")
         st = self.client.get("/typ/start").get_json()
-        s = self.typ.sessions["u2--chain=1"][0]
+        s = self.typ.sessions["u2--run=1"][0]
         for i in range(4):
             self.client.post("/typ/rate", json={"i_trial": i, "value": answer(s, s.items[i]), "rt_ms": 1})
         self.typ.sessions.clear()                                         # what a restart loses
@@ -159,9 +161,9 @@ class TestServer(unittest.TestCase):
         self.assertEqual((again["i_trial"], again["items"]), (4, st["items"]))
 
     def test_new_sid_in_url_switches_session(self):
-        self.login("u1--chain=1")
-        self.assertEqual(self.client.get("/?sid=u1--chain=1").data, b"u1--chain=1")
-        self.assertEqual(self.client.get("/?sid=u1--chain=2").data, b"None")
+        self.login("u1--run=1")
+        self.assertEqual(self.client.get("/?sid=u1--run=1").data, b"u1--run=1")
+        self.assertEqual(self.client.get("/?sid=u1--run=2").data, b"None")
         self.assertEqual(self.client.get("/?sid=bad").status_code, 400)
 
     def test_admin(self):
@@ -170,6 +172,46 @@ class TestServer(unittest.TestCase):
         page = self.client.get("/typ/admin?key=k")
         self.assertIn(b'data-state="pass"', page.data)
         self.assertEqual(len(self.client.get("/typ/admin.csv?key=k").data.decode().strip().splitlines()), 2)
+
+    def test_admin_abandoned_and_filters(self):
+        self.rate_all("u1--run=1")
+        self.login("u2--run=1")
+        self.client.get("/typ/start")
+        meta = Path(self.tmp.name) / "test" / "u2" / "run=1" / "session.json"
+        m = json.loads(meta.read_text())
+        m["started"] -= 3600
+        meta.write_text(json.dumps(m))
+        self.assertEqual({r["user_id"]: r["state"] for r in self.typ.summaries()}, {"u1": "pass", "u2": "abandoned"})
+        rows = lambda q: self.client.get("/typ/admin.csv?key=k" + q).data.decode().strip().splitlines()[1:]
+        self.assertEqual((len(rows("&state=pass")), len(rows("&q=u2")), len(rows("&state=running"))), (1, 1, 0))
+
+
+PID, PSTUDY, SESS1, SESS2 = "a" * 24, "b" * 24, "c" * 24, "d" * 24
+
+
+class TestProlific(unittest.TestCase):
+    setUp, tearDown, login, rate_all = TestServer.setUp, TestServer.tearDown, TestServer.login, TestServer.rate_all
+
+    def enter(self, session_id=SESS1, pid=PID):
+        return self.client.get(f"/?PROLIFIC_PID={pid}&STUDY_ID={PSTUDY}&SESSION_ID={session_id}")
+
+    def test_entry_assigns_and_resumes(self):
+        self.assertEqual(self.enter().location, f"/?sid={PID}--run=1")
+        self.assertEqual(self.enter().location, f"/?sid={PID}--run=1")
+        self.assertEqual(self.enter(SESS2).location, f"/?sid={PID}--run=2")
+        self.assertEqual(self.enter(pid="A" * 24).status_code, 400)       # Prolific ids are lowercase hex
+
+    def test_ids_stored_and_redirect_at_the_end(self):
+        sid = self.enter().location.split("sid=")[1]
+        last = self.rate_all(sid)
+        self.assertEqual(last["redirect_url"], "https://app.prolific.com/submissions/complete?cc=CODE9")
+        meta = json.loads((Path(self.tmp.name) / "test" / PID / "run=1" / "session.json").read_text())
+        self.assertEqual(meta["prolific"]["SESSION_ID"], SESS1)
+
+    def test_no_consent_exit_link(self):
+        with self.app.test_request_context("/"):
+            session["username"] = f"{PID}--run=1"
+            self.assertEqual(render_template_string("{{ exit_url }}"), "https://app.prolific.com/submissions/complete?cc=NOC")
 
 
 if __name__ == "__main__":

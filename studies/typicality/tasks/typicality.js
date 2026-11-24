@@ -59,7 +59,9 @@ window.potatoTimeline = function (jsPsych, potato) {
     '.typ-end{font-size:clamp(18px,1.5vw,32px);line-height:1.6;max-width:60vw;margin:0 auto}' +
     '.typ-end h2{font-size:1.3em;margin:0 0 1em}' +
     '.typ-code{display:inline-block;font:600 1.3em/1.4 ui-monospace,monospace;letter-spacing:.05em;' +
-    'padding:.3em .9em;margin:.3em 0 1em;border:2px dashed #6b5ccf;border-radius:6px;user-select:all}';
+    'padding:.3em .9em;margin:.3em 0 1em;border:2px dashed #6b5ccf;border-radius:6px;user-select:all}' +
+    '.typ-btn{display:inline-block;padding:.5em 1.4em;border-radius:6px;background:#6b5ccf;color:#fff;text-decoration:none}' +
+    '.typ-note{font-size:.8em;color:#777}';
   document.head.appendChild(style);
 
   var task = {
@@ -74,7 +76,12 @@ window.potatoTimeline = function (jsPsych, potato) {
             ? '<p>Your Prolific completion code is:</p><div class="typ-code">' + esc(reply.completion_code) + '</div>'
             : '') +
           '<p>Your submission will be manually approved by the researcher, ' +
-          'who will check it as soon as possible.</p></div>';
+          'who will check it as soon as possible.</p>' +
+          (reply.redirect_url   // Prolific participants: back to Prolific with the code
+            ? '<p><a class="typ-btn" href="' + esc(reply.redirect_url) + '">Back to Prolific</a></p>' +
+              '<p class="typ-note">You will be taken back to Prolific in a few seconds.</p>'
+            : '') + '</div>';
+        if (reply.redirect_url) setTimeout(function () { window.location.href = reply.redirect_url; }, 5000);
       }
 
       function fail(err) {

@@ -48,6 +48,8 @@ window.potatoTimeline = function (jsPsych, potato) {
     '.chain-end h2{font-size:1.3em;margin:0 0 1em}' +
     '.chain-code{display:inline-block;font:600 1.3em/1.4 ui-monospace,monospace;letter-spacing:.05em;' +
     'padding:.3em .9em;margin:.3em 0 1em;border:2px dashed #6b5ccf;border-radius:6px;user-select:all}' +
+    '.chain-btn{display:inline-block;padding:.5em 1.4em;border-radius:6px;background:#6b5ccf;color:#fff;text-decoration:none}' +
+    '.chain-note{font-size:.8em;color:#777}' +
     '.chain-fade{animation:chain-fade 120ms ease-out}' +
     '@keyframes chain-fade{from{opacity:0}to{opacity:1}}';
   document.head.appendChild(style);
@@ -91,7 +93,12 @@ window.potatoTimeline = function (jsPsych, potato) {
             ? '<p>Your Prolific completion code is:</p><div class="chain-code">' + esc(reply.completion_code) + '</div>'
             : '') +
           '<p>Your submission will be manually approved by the researcher, ' +
-          'who will check it as soon as possible.</p></div>';
+          'who will check it as soon as possible.</p>' +
+          (reply.redirect_url   // Prolific participants: back to Prolific with the code
+            ? '<p><a class="chain-btn" href="' + esc(reply.redirect_url) + '">Back to Prolific</a></p>' +
+              '<p class="chain-note">You will be taken back to Prolific in a few seconds.</p>'
+            : '') + '</div>';
+        if (reply.redirect_url) setTimeout(function () { window.location.href = reply.redirect_url; }, 5000);
       }
 
       function fail(err) {

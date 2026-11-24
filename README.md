@@ -18,9 +18,35 @@ studies/chain/                       one folder per study, self-contained
 studies/typicality/
 ```
 
-Each study runs as its own server (`conda activate lingu` first: potato-annotation 2.14.0)
-and uses its own cookie name, so both can be open in one browser. A participant URL always
-carries `?sid=...`; opening a URL with a different `sid` logs the previous session out.
+Each study runs as its own server (`conda activate lingu` first: potato-annotation 2.14.0,
+waitress) and uses its own cookie name, so both can be open in one browser. Hosting for Prolific
+(Cloudflare tunnel from this workstation): `deploy/README.md`.
+
+**Entry.** Prolific participants arrive with
+`?PROLIFIC_PID={{%PROLIFIC_PID%}}&STUDY_ID={{%STUDY_ID%}}&SESSION_ID={{%SESSION_ID%}}` (chain: plus
+`&spec=<spec>`, one Prolific study per spec). The server checks the three ids (24 lowercase hex),
+gives each new Prolific `SESSION_ID` the user's next unused chain number $k$, and redirects to
+the session's `?sid=...` URL; the same `SESSION_ID` always returns to the same session. The ids
+are stored in `responses_data/<study_id>/<PROLIFIC_PID>/prolific.json` and in each
+`session.json` (`prolific`). Test links with `?sid=...` work as before; opening a URL with a
+different `sid` logs the previous session out.
+
+**Consent.** Each study starts with Potato's consent page (`surveyflow/consent.jsonl`,
+placeholder text to be replaced by the approved ethics text; `surveyflow/consent.css` hides
+Potato's navigation bar). "I do not agree" ends the study on `templates/done.html`, which sends
+Prolific participants back with `no_consent_code`.
+
+**End.** The last screen shows the completion code; Prolific participants are sent back to
+`https://app.prolific.com/submissions/complete?cc=<code>` after 5 s (or with the button).
+
+**Monitoring** (`/chain/admin`, `/typ/admin`, `?key=<admin_api_key.txt>`): one row per session
+with state (`running`, `abandoned` = no answer for `abandon_after_min`, `pass`, `fail`), Prolific
+study and session ids, duration, median RT; filter by state or Prolific study, search by PID or
+sid, optional 30 s auto-refresh, CSV of the shown rows. Approve and reject on Prolific.
+
+**Load test.** `python loadtest.py --n 300 --think 1.0 --ramp 10` in a study folder runs N
+simulated Prolific participants (entry, consent, every trial) against a throwaway copy of the
+study and reports latency per request type, errors and data completeness.
 
 ## Forced-choice chain (`studies/chain/`)
 
@@ -60,12 +86,16 @@ Do not use `potato start`: it would not add the `/chain/*` routes.
 |---|---|
 | `sessions.yaml` | Study variables (`study_id`, paths, host, port) and the session **specs** |
 | `config.yaml` | Potato config: URL login on `sid`, the `chain` jsPsych phase (+ an unreachable placeholder annotation phase Potato requires) |
-| `run.py` | Starts Potato (`create_app`) with the chain blueprint |
+| `run.py` | Starts Potato (`create_app`) with the chain blueprint, served by waitress |
+| `prolific.py` | Prolific ids → session id, completion URL |
+| `surveyflow/` | Consent page and its CSS |
+| `templates/done.html` | Page after declining consent |
+| `loadtest.py` | Simulated participants against a throwaway copy |
 | `chain_core.py` | Specs, asset loading/checks, session id, one session's trials (no Flask) |
 | `chain_server.py` | `/chain/next`, `/chain/choose`, `/chain/admin`, storage |
 | `tasks/chain.js` | jsPsych timeline: shows the server's trials, posts the choices |
 | `proposal/graph/base.py` | `GraphProposal`, the base class for graph proposals |
-| `proposal/graph/uniform_neighbor.py` | $x^*$ uniform over the neighbours of $x$ |
+| `proposal/graph/dmcmcp.py` | d-MCMCP proposal (Hsu et al., 2019): random walk + uniform jump + stuck rule |
 | `proposal/parametric/` | Reserved for future proposals |
 | `export.py` | Merge all sessions into CSVs |
 | `data/closing.jsonl` | Placeholder item for the required annotation phase |
@@ -77,8 +107,8 @@ specs:
   dummy_envy:
     stimuli_name: dummy_emosent_binary     # assets/stimuli/<stimuli_name>/
     graph_name: b=4--emb=spades            # <graph_name>.json in that folder
-    propose_fn: graph/uniform_neighbor     # proposal/graph/uniform_neighbor.py
-    propose_params: {}                     # keyword arguments of that class
+    propose_fn: graph/dmcmcp               # proposal/graph/dmcmcp.py
+    propose_params: {p_geom: 0.0, p_jump: 0.1, n_stuck: null}   # keyword arguments of that class
     n_draw: 20
     question: Pick the sentence that ...
     n_attention: 3                         # attention item k goes after draw floor(k*n_draw/(K+1))
@@ -88,11 +118,26 @@ specs:
 
 Everything is loaded and checked at boot, so a bad spec stops the server before anyone arrives.
 
-### Adding a proposal
+### The proposal (`graph/dmcmcp`)
 
-Add `proposal/graph/<name>.py` with exactly one subclass of `GraphProposal` that
-implements `propose(self, x, rng)` (all randomness from `rng`, no per-session state) and
-optionally `check(self)` for boot-time warnings. Then use `propose_fn: graph/<name>`.
+Discrete MCMCP (Hsu et al., 2019) on a $b$-regular stimulus graph (built elsewhere from a
+similarity $s(x, x^*)$ and degree $b$). For reference $x$ and $n_\text{rejected}$ proposals
+rejected in a row (participant kept $x$; attention trials do not count):
+
+1. **stuck**: if $n_\text{stuck}$ is set and $n_\text{rejected}$ is a positive multiple of
+   $n_\text{stuck}$, $x^* \sim \mathcal{U}(\mathcal{X}\setminus\{x\})$. The proposal then depends
+   on the chain's history, so convergence to the target is no longer guaranteed. `null` = never.
+2. **jump**: otherwise, with probability $p_\text{jump}$, $x^* \sim \mathcal{U}(\mathcal{X}\setminus\{x\})$.
+3. **walk**: otherwise a random walk of $1+K$ steps, $P(K=k)=(1-p_\text{geom})\,p_\text{geom}^{k}$,
+   each to a uniformly chosen neighbour; $x^*$ = the end node, redrawn if it is $x$.
+   $p_\text{geom}=0$ is the uniform-neighbour proposal; expected length $1/(1-p_\text{geom})$.
+
+Each chain trial stores `proposal_kind` (walk/jump/stuck), `n_steps` and `n_rejected`. The
+boot log warns if the graph is not regular or `n_stuck` is set.
+
+Adding another proposal: `proposal/graph/<name>.py` with exactly one subclass of
+`GraphProposal` implementing `propose(self, x, rng, n_rejected) -> (x_star, info)` (all
+randomness from `rng`, no per-session state), then `propose_fn: graph/<name>`.
 
 ### Data
 
@@ -103,7 +148,7 @@ responses_data/<study_id>/<user_id>/spec=<spec>--chain=<k>/
 ```
 
 Trial fields: `i_trial, trial_type (chain|attention), i_draw, n_draw, x_id, x_star_id,
-x_hat_id, left_id, chosen_side, att_id, correct, rt_ms, server_ms, t_prev, t_answered,
+x_hat_id, left_id, chosen_side, proposal_kind, n_steps, n_rejected, att_id, correct, rt_ms, server_ms, t_prev, t_answered,
 user_id, sid`. Stimuli are stored as ids; texts are in `stimuli.csv`.
 `rt_ms` is measured in the browser (`performance.now()`) from the frame the pair appears to
 the click. The page shows the next pair as soon as the participant clicks (the server sends,
@@ -131,7 +176,7 @@ cd studies/typicality && python run.py        # reads study.yaml; serves on 127.
   sent when the page opens, so the next item appears at once and each rating is sent in the
   background. The last screen thanks them, shows `completion_code` and says the submission will
   be approved manually.
-- **Participant URL**: `http://127.0.0.1:8200/?sid=<user_id>--chain=<k>`, `k` = repetition
+- **Participant URL**: `http://127.0.0.1:8200/?sid=<user_id>--run=<k>`, `k` = repetition
   (same `user_id` as in the chain study). Same URL again resumes (also after a server restart).
 - **Variables**: `study.yaml` (`study_id`, `stimuli_name`, `question`, `min_value`, `max_value`,
   `step`, `left_label`, `right_label`, `completion_code`, paths, host, port).
@@ -146,7 +191,7 @@ cd studies/typicality && python run.py        # reads study.yaml; serves on 127.
   median RT, filter and CSV download.
 - **Data**:
   ```
-  responses_data/<study_id>/<user_id>/chain=<k>/
+  responses_data/<study_id>/<user_id>/run=<k>/
     session.json    scale settings, asset sha256, status, running summary
     trials.jsonl    one line per rating
   ```

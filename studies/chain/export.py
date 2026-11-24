@@ -15,7 +15,7 @@ from pathlib import Path
 from chain_core import load_study
 
 TRIAL_COLS = ["user_id", "sid", "i_trial", "trial_type", "i_draw", "n_draw", "x_id", "x_star_id", "x_hat_id",
-              "left_id", "chosen_side", "att_id", "correct", "rt_ms", "server_ms", "t_prev", "t_answered"]
+              "left_id", "chosen_side", "proposal_kind", "n_steps", "n_rejected", "att_id", "correct", "rt_ms", "server_ms", "t_prev", "t_answered"]
 
 
 def main(study_path="sessions.yaml"):
@@ -28,6 +28,7 @@ def main(study_path="sessions.yaml"):
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         spec = meta.pop("spec")
         meta.pop("asset_sha256")
+        meta.update({f"prolific_{k}": v for k, v in (meta.pop("prolific", None) or {}).items()})
         sessions.append({**meta, **{f"spec_{k}": v for k, v in spec.items()}})
         for line in (meta_path.parent / "trials.jsonl").read_text(encoding="utf-8").splitlines():
             if line.strip():

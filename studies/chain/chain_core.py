@@ -147,6 +147,7 @@ class Session:
             if d < spec.n_draw:
                 self.schedule.append(("chain", d))
         self.i_trial = 0
+        self.n_rejected = 0   # chain proposals rejected in a row (x kept); attention trials do not count
         self.pending = self._make_trial()
 
     @property
@@ -164,11 +165,14 @@ class Session:
         if kind == "attention":
             return {"i_trial": self.i_trial, "trial_type": "attention", "att_id": what["att_id"],
                     "left_text": what["stimulus_A"], "right_text": what["stimulus_B"], "answer": what["answer"]}
-        x_star = self.proposal.propose(self.x, self.rng)
+        x_star, info = self.proposal.propose(self.x, self.rng, self.n_rejected)
+        if x_star == self.x:
+            raise RuntimeError(f"{self.spec.propose_fn} proposed x itself")
         x_left = self.rng.random() < 0.5
         left, right = (self.x, x_star) if x_left else (x_star, self.x)
         return {"i_trial": self.i_trial, "trial_type": "chain", "i_draw": what, "x_id": self.x, "x_star_id": x_star,
-                "left_id": left, "right_id": right,
+                "left_id": left, "right_id": right, "n_rejected": self.n_rejected,
+                "proposal_kind": info.get("proposal_kind"), "n_steps": info.get("n_steps"),
                 "left_text": self.assets.stimuli[left], "right_text": self.assets.stimuli[right]}
 
     def choose(self, side: str) -> dict:
@@ -180,10 +184,13 @@ class Session:
         t = self.pending
         rec = {"i_trial": t["i_trial"], "trial_type": t["trial_type"], "chosen_side": side,
                "i_draw": None, "n_draw": self.spec.n_draw, "x_id": None, "x_star_id": None, "x_hat_id": None,
-               "left_id": None, "att_id": None, "correct": None}
+               "left_id": None, "att_id": None, "correct": None,
+               "proposal_kind": None, "n_steps": None, "n_rejected": None}
         if t["trial_type"] == "chain":
             x_hat = t["left_id"] if side == "left" else t["right_id"]
-            rec.update(i_draw=t["i_draw"], x_id=t["x_id"], x_star_id=t["x_star_id"], x_hat_id=x_hat, left_id=t["left_id"])
+            rec.update(i_draw=t["i_draw"], x_id=t["x_id"], x_star_id=t["x_star_id"], x_hat_id=x_hat, left_id=t["left_id"],
+                       proposal_kind=t["proposal_kind"], n_steps=t["n_steps"], n_rejected=t["n_rejected"])
+            self.n_rejected = self.n_rejected + 1 if x_hat == self.x else 0
             self.x = x_hat
         else:
             rec.update(att_id=t["att_id"], correct=(side == "left") == (t["answer"] == "A"))
@@ -199,13 +206,13 @@ class Session:
         """
         if self.done:
             return {}
-        saved = (self.rng.getstate(), self.x, self.i_trial, self.pending)
+        saved = (self.rng.getstate(), self.x, self.i_trial, self.pending, self.n_rejected)
         out = {}
         for side in SIDES:
             self.choose(side)
             out[side] = self.pending
             self.rng.setstate(saved[0])
-            self.x, self.i_trial, self.pending = saved[1:]
+            self.x, self.i_trial, self.pending, self.n_rejected = saved[1:]
         return out
 
     def replay(self, records: list):

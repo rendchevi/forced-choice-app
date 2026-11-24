@@ -1,0 +1,11 @@
+# Cloudflare named tunnel: public https hostnames -> the two study servers on this workstation.
+# Copy to ~/.cloudflared/forced-choice.yml (see deploy/README.md).
+tunnel: 978e3e7f-3ada-406d-bde4-dff163bcc87d
+credentials-file: /home/rendchevi/.cloudflared/978e3e7f-3ada-406d-bde4-dff163bcc87d.json
+
+ingress:
+  - hostname: chain.reneren.xyz          # studies/chain (sessions.yaml port)
+    service: http://127.0.0.1:8100
+  - hostname: typicality.reneren.xyz     # studies/typicality (study.yaml port)
+    service: http://127.0.0.1:8200
+  - service: http_status:404
