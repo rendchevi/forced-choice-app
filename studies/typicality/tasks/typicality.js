@@ -47,7 +47,6 @@ window.potatoTimeline = function (jsPsych, potato) {
     '.typ-range::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;margin-top:-8px;' +
     'border-radius:50%;background:#000;border:0}' +
     '.typ-range::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:#000;border:0}' +
-    '.typ-range.unset::-webkit-slider-thumb{opacity:0}.typ-range.unset::-moz-range-thumb{opacity:0}' +
     '.typ-value{position:absolute;top:0;transform:translateX(-50%);font-size:1.4em;line-height:1;color:#000}' +
     '.typ-labels{display:flex;justify-content:space-between;color:#555;margin-top:1.4em}' +
     '.typ-next{font:inherit;font-size:clamp(16px,1.2vw,26px);margin-top:2.2vw;padding:.5em 1.4em;' +
@@ -91,7 +90,7 @@ window.potatoTimeline = function (jsPsych, potato) {
           '<div class="typ-bar" role="progressbar" aria-label="Progress"><div></div></div>' +
           '<p class="typ-q"></p><div class="typ-stim"></div>' +
           '<div class="typ-scale"><span class="typ-value"></span>' +
-          '<input type="range" class="typ-range unset" aria-label="Rating">' +
+          '<input type="range" class="typ-range" aria-label="Rating">' +
           '<div class="typ-labels"><span></span><span></span></div></div>' +
           '<button type="button" class="typ-next" disabled>Submit</button></div>';
         var stim = root.querySelector('.typ-stim');
@@ -129,12 +128,17 @@ window.potatoTimeline = function (jsPsych, potato) {
           shown.style.left = 'calc(' + (f * 100) + '% + ' + (10 - 20 * f) + 'px)';
         }
 
+        function showValue() {
+          shown.textContent = snap(parseFloat(range.value)).toFixed(decimals);
+          placeValue();
+        }
+
         function show(j) {
           i = j;
           stim.textContent = items[j];
-          range.value = (st.min_value + st.max_value) / 2;   // hidden until touched: no anchor
-          range.classList.add('unset');
-          shown.textContent = '';
+          // thumb and value visible from the start, at the middle; Submit waits for a touch
+          range.value = snap((st.min_value + st.max_value) / 2);
+          showValue();
           next.disabled = true;
           firstTouch = null;
           setProgress(j);
@@ -148,9 +152,7 @@ window.potatoTimeline = function (jsPsych, potato) {
         function touched() {
           if (ended) { return; }
           if (firstTouch === null) { firstTouch = Math.max(0, Math.round(performance.now() - shownAt)); }
-          range.classList.remove('unset');
-          shown.textContent = snap(parseFloat(range.value)).toFixed(decimals);
-          placeValue();
+          showValue();
           next.disabled = false;
         }
         range.addEventListener('input', touched);

@@ -125,9 +125,9 @@ ratings, and `tasks/typicality.js` runs the whole study in one jsPsych trial wit
 cd studies/typicality && python run.py        # reads study.yaml; serves on 127.0.0.1:8200
 ```
 
-- **The participant's view**: question → stimulus → slider (its thumb appears at the first
-  click, so there is no anchor; the number is shown) → **Next** (enabled once the slider was
-  touched) → progress bar, centred. No navigation back or between items. All item texts are
+- **The participant's view**: progress bar ("Progress N%") → question → stimulus → slider
+  (thumb and number shown from the start, at the middle of the scale) → **Submit** (enabled
+  once the slider was touched; `first_touch_ms` records when), centred. No navigation back or between items. All item texts are
   sent when the page opens, so the next item appears at once and each rating is sent in the
   background. The last screen thanks them, shows `completion_code` and says the submission will
   be approved manually.
