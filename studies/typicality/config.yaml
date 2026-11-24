@@ -1,0 +1,26 @@
+# Potato config: the study shell around the ratings (URL login and the jsPsych page).
+# Start it with `python run.py`, not `potato start`: run.py adds the /typ/* routes.
+# The jsPsych page's last screen (thank you + completion code) ends the study, so participants never
+# reach the annotation phase below. Potato refuses a config without one, hence the placeholder item.
+annotation_task_name: Typicality judgements
+task_dir: .
+output_annotation_dir: annotation_output/
+data_files: [data/closing.jsonl]
+item_properties: {id_key: id, text_key: text}
+
+# one URL = one session: ?sid=<user_id>--chain=<k> (parsed by typ_server.py)
+login: {type: url_direct, url_argument: sid}
+user_config: {allow_all_users: true}
+
+annotation_schemes:
+  - annotation_type: text
+    name: comments
+    description: Comments (optional)
+
+phases:
+  order: [ratings, annotation]
+  ratings:
+    type: jspsych
+    timeline: tasks/typicality.js
+    plugins: [call-function]
+    save: incremental

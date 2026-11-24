@@ -1,14 +1,16 @@
 # Typicality study variables. One study = one file; a new study gets a new file and study_id.
 # Participant URL: /?sid=<user_id>--chain=<k>   (user_id as in the chain study; k = repetition)
-# prepare.py turns this into config.yaml + data/ (both derived, rewritten on every run).
 study_id: dummy_emosent_binary--typicality-pilot
-stimuli_name: dummy_emosent_binary      # assets/stimuli/<stimuli_name>/stimuli.csv
+stimuli_name: dummy_emosent_binary      # assets/stimuli/<stimuli_name>/{stimuli.csv, attention_checks_typicality.json}
 assets_root: ../../assets/stimuli       # shared assets, relative to this folder
 question: How typical is this sentence of envy?
 min_value: 0
 max_value: 100
+step: 1                                 # slider resolution
 left_label: Not at all typical
 right_label: Very typical
 completion_code: DUMMY456
+potato_config: config.yaml
+output_root: responses_data
 host: 127.0.0.1
 port: 8200

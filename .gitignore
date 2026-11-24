@@ -8,6 +8,3 @@ datasets.sqlite*
 admin_api_key.txt
 *.log
 layouts/
-# derived by studies/typicality/prepare.py
-studies/typicality/config.yaml
-studies/typicality/data/

@@ -6,7 +6,7 @@ Potato-based apps for the human studies of this project. The same participants (
 | Study | Folder | Task | Port |
 |---|---|---|---|
 | Forced-choice chain | `studies/chain/` | MCMC-with-People chain of 2AFC choices (custom server + jsPsych) | 8100 |
-| Typicality | `studies/typicality/` | rate every stimulus on a continuous scale (plain Potato) | 8200 |
+| Typicality | `studies/typicality/` | rate every stimulus on a continuous scale (custom server + jsPsych) | 8200 |
 
 ```
 assets/stimuli/<stimuli_name>/       shared by both studies
@@ -117,32 +117,43 @@ from its URL and its choices.
 ## Typicality (`studies/typicality/`)
 
 Every participant rates every stimulus of `stimuli.csv` on a continuous scale
-$[\text{min\_value}, \text{max\_value}]$ (Potato's `vas` scheme), one stimulus per page, in a
-random order per participant. Plain Potato: no custom routes.
+$[\text{min\_value}, \text{max\_value}]$, one stimulus at a time. Built like the chain: Potato
+is the shell (URL login, the jsPsych page), `typ_server.py` serves the items and stores the
+ratings, and `tasks/typicality.js` runs the whole study in one jsPsych trial with a fixed page.
 
 ```bash
-cd studies/typicality && python run.py        # prepares inputs from study.yaml, serves on 127.0.0.1:8200
+cd studies/typicality && python run.py        # reads study.yaml; serves on 127.0.0.1:8200
 ```
 
+- **The participant's view**: question → stimulus → slider (its thumb appears at the first
+  click, so there is no anchor; the number is shown) → **Next** (enabled once the slider was
+  touched) → progress bar, centred. No navigation back or between items. All item texts are
+  sent when the page opens, so the next item appears at once and each rating is sent in the
+  background. The last screen thanks them, shows `completion_code` and says the submission will
+  be approved manually.
 - **Participant URL**: `http://127.0.0.1:8200/?sid=<user_id>--chain=<k>`, `k` = repetition
-  (each repetition is a new Potato user with its own random order).
+  (same `user_id` as in the chain study). Same URL again resumes (also after a server restart).
 - **Variables**: `study.yaml` (`study_id`, `stimuli_name`, `question`, `min_value`, `max_value`,
-  `left_label`, `right_label`, `completion_code`, host, port). `prepare.py` (run by `run.py`)
-  turns it into `config.yaml` and `data/`, both derived and git-ignored: edit `study.yaml`.
-- **Order and attention checks**: each participant gets every stimulus, shuffled, and every
-  item of `attention_checks_typicality.json`, spread evenly: check $k$ of $K$ comes after
-  stimulus $\lfloor kn/(K+1) \rfloor$ (`order.py`; seeded by study and `sid`, so reproducible).
-  The instruction sits in the stimulus slot ("move the slider all the way to the RIGHT end")
-  under the usual question. `run.py` assigns the items itself in that order, because Potato
-  hands them out a few at a time in its own order, and Potato's check injection
-  (`attention_checks.frequency`) is not used, because it leaked injected checks to later
-  participants as regular items. Potato still grades the checks (`answer: min|max` becomes the
-  scale's end value) and lists them in `/admin`; nobody is warned or stopped, the researcher
-  decides at manual approval.
-- **Last page**: `templates/done.html` replaces Potato's completion page: thank you, the
-  completion code, manual-approval note.
-- **Data**: `annotation_output/<study_id>/<sid>/user_state.json` (Potato's format, includes
-  time per item); attention verdicts in `annotation_output/<study_id>/quality_control_results.json`.
-  CSV: `python -m potato.export --config config.yaml --format csv --output ./export/`.
-- **Monitoring**: `http://127.0.0.1:8200/admin` (key in `admin_api_key.txt`, written on the first request to `/admin`).
+  `step`, `left_label`, `right_label`, `completion_code`, paths, host, port).
+- **Order and attention checks** (`order.py`): stimuli shuffled per session (seeded by study
+  and `sid`, so reproducible); check $k$ of $K$ from `attention_checks_typicality.json` comes
+  after stimulus $\lfloor kn/(K+1) \rfloor$. The instruction sits in the stimulus slot ("move the
+  slider all the way to the RIGHT end") under the usual question; the server grades it
+  (`answer: min|max` = exactly that end of the scale). Nobody is warned or stopped: the
+  researcher decides at manual approval.
+- **Monitoring**: `http://127.0.0.1:8200/typ/admin?key=<admin key>` (`admin_api_key.txt`,
+  written on the first request to `/admin`): one row per session with checks right/total,
+  median RT, filter and CSV download.
+- **Data**:
+  ```
+  responses_data/<study_id>/<user_id>/chain=<k>/
+    session.json    scale settings, asset sha256, status, running summary
+    trials.jsonl    one line per rating
+  ```
+  Fields: `i_trial, n_trials, trial_type (stimulus|attention), stimulus_id, att_id, value,
+  correct, rt_ms, first_touch_ms, server_ms, t_answered, user_id, sid`. `rt_ms`: from the
+  frame the stimulus appears to the click on Next (browser `performance.now()`);
+  `first_touch_ms`: to the first touch of the slider; `server_ms`: server-side gap since the
+  previous rating (or page load). `python export.py` merges all sessions into
+  `export--trials.csv` and `export--sessions.csv`.
 - **Tests**: `python -m unittest discover -s tests -v`
