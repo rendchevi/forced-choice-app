@@ -17,9 +17,9 @@ specs:
     graph_name: b=6--emb=BAAI-bge-m3            # file name without .json
     propose_fn: graph/dmcmcp
     propose_params: {p_geom: 0.5, p_jump: 0.1, n_stuck: null}   # null = never
-    n_draw: 80                     # draws per chain
-    n_chain: 3                     # chains per session, one after the other
+    n_draw: 60                     # draws per chain
+    n_chain: 5                     # chains per session, one after the other
     question: In which sentence do you think the speaker expresses admiration more than any other emotion?
-    n_attention: 4                 # per chain
-    attention_pass: 4              # per chain
+    n_attention: 3                 # per chain
+    attention_pass: 3              # per chain
     completion_code: CU15BV60        # Prolific completion code shown at the end
