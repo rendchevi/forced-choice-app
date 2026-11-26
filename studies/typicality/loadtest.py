@@ -4,15 +4,17 @@
 
 Runs on a throwaway copy of this study folder (own study_id, port and data folder), so the real
 data, Potato state and running servers are never touched. Each participant: Prolific entry URL
--> consent ("I agree") -> the jsPsych page -> /typ/start -> one /typ/rate per item, with a
+-> consent (agree) -> the jsPsych page -> /typ/start -> one /typ/rate per item, with a
 think time of think * U(0.5, 1.5) seconds before each answer. Reports latency per request type,
 errors, and whether every session's data is complete on disk.
 """
 
 import argparse
+import html
 import http.cookiejar
 import json
 import random
+import re
 import shutil
 import socket
 import statistics
@@ -62,9 +64,11 @@ class Participant:
 
     def run(self):
         ids = f"PROLIFIC_PID={self.pid}&STUDY_ID={'5' * 24}&SESSION_ID={self.i + 10**6:024x}"
-        self.call("entry", f"/?{ids}")
-        self.call("consent", "/updateinstance", {"instance_id": "__phase_page__",
-                                                 "annotations": {"consent_agree:::I agree": "true"}})
+        _, page = self.call("entry", f"/?{ids}")
+        # the consent answer: a checkbox (its input is named consent_agree:::<label>) or the radio "I agree"
+        m = re.search(r'name="(consent_agree:::[^"]+)"', page.decode())
+        key = html.unescape(m[1]) if m else "consent_agree:::I agree"
+        self.call("consent", "/updateinstance", {"instance_id": "__phase_page__", "annotations": {key: "true"}})
         self.call("consent", "/annotate", {"action": "next_instance", "instance_id": "__phase_page__"})
         self.call("page", "/")
         status, raw = self.call("start", "/typ/start")

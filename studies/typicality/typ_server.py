@@ -28,6 +28,7 @@ from typ_core import Session, load_assets, parse_sid
 log = logging.getLogger(__name__)
 
 MAX_MS = 24 * 3600 * 1000
+CONSENT_FILE = Path(__file__).resolve().parent / "surveyflow" / "consent.jsonl"
 
 
 def _write_json_atomic(path: Path, obj):
@@ -46,6 +47,11 @@ class TypStudy:
         self.root = Path(study["output_root"]) / study["study_id"]
         self.abandon_after_s = 60 * study["abandon_after_min"]
         self.assets = load_assets(study["assets_root"], study["stimuli_name"])  # fails before anyone arrives
+        k, m = study["n_attention"], len(self.assets.attention)
+        if k > m:
+            log.warning("n_attention = %d checks but only %d items; items are reused, each at most %d times", k, m, -(-k // m))
+        if k and not m:
+            raise ValueError("n_attention > 0 but the attention file is empty")
         self.sessions = {}   # sid -> (Session, meta)
         # guards self.sessions and prolific.json only; each session's answers use its own meta["_lock"],
         # so the fsync of one session's answer never holds up another session
@@ -83,7 +89,7 @@ class TypStudy:
                 log.warning("%s: asset files changed since the session started", sid)
             lines = (folder / "trials.jsonl").read_text(encoding="utf-8").splitlines()
             records = [json.loads(line) for line in lines if line.strip()]
-            s.replay(records)
+            s.replay(records, meta.get("skips", []))
         else:
             folder.mkdir(parents=True, exist_ok=True)
             (folder / "trials.jsonl").touch()
@@ -92,7 +98,8 @@ class TypStudy:
                     "prolific": ids_for_sid(self.root, user_id, sid),
                     "status": "in_progress", "started": time.time(), "updated": None, "finished": None,
                     "n_trials": s.n_trials, "n_trials_done": 0, "attention_correct": 0,
-                    "attention_total": sum(it["trial_type"] == "attention" for it in s.items), "median_rt_ms": None}
+                    "attention_total": sum(it["trial_type"] == "attention" for it in s.items), "median_rt_ms": None,
+                    "skips": []}   # skipped stimuli: not rated, not in trials.jsonl
             records = []
             _write_json_atomic(meta_path, meta)
         meta["_lock"] = threading.Lock()   # one answer at a time per session; sessions run in parallel
@@ -108,20 +115,26 @@ class TypStudy:
                 "step": st["step"], "left_label": st["left_label"], "right_label": st["right_label"],
                 "i_trial": s.i_trial, "items": [it["text"] for it in s.items]}
 
-    def record(self, sid, s: Session, meta: dict, value, rt_ms, first_touch_ms):
+    def record(self, sid, s: Session, meta: dict, value, rt_ms, first_touch_ms, skip=False):
         now = time.time()
-        rec = s.rate(value)
+        folder = self.folder(meta["user_id"], meta["run"])
+        rec = s.skip() if skip else s.rate(value)
         prev = meta.get("_prev")
-        meta["_prev"] = now
+        meta["_prev"] = meta["updated"] = now
+        if skip and "trial_type" not in rec:
+            # a skipped stimulus is not a rating: it goes in session.json, not trials.jsonl
+            meta["skips"].append({**rec, "rt_ms": rt_ms, "t_skipped": now})
+            if s.done:
+                meta.update(status="complete", finished=now)
+            _write_json_atomic(folder / "session.json", {k: v for k, v in meta.items() if not k.startswith("_")})
+            return
         rec.update(user_id=meta["user_id"], sid=sid, rt_ms=rt_ms, first_touch_ms=first_touch_ms,
                    server_ms=round((now - prev) * 1000) if prev else None, t_answered=now)
-        folder = self.folder(meta["user_id"], meta["run"])
         with open(folder / "trials.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             f.flush()
             os.fsync(f.fileno())
         meta["n_trials_done"] += 1
-        meta["updated"] = now
         if rec["trial_type"] == "attention":
             meta["attention_correct"] += bool(rec["correct"])
         elif rt_ms is not None:
@@ -141,7 +154,7 @@ class TypStudy:
                          "user_id": m["user_id"], "run": m["run"],
                          "rated": f'{m["n_trials_done"]}/{m["n_trials"]}',
                          "attention_correct": m["attention_correct"], "attention_total": m["attention_total"],
-                         "median_rt_ms": m["median_rt_ms"],
+                         "median_rt_ms": m["median_rt_ms"], "skips": len(m.get("skips", [])),
                          "duration_min": round(((m["finished"] or last) - m["started"]) / 60, 1),
                          "started": _fmt_time(m["started"]), "last_activity": _fmt_time(last),
                          "finished": _fmt_time(m["finished"]),
@@ -200,6 +213,13 @@ def make_blueprint(typ: TypStudy, is_admin) -> Blueprint:
             return {"exit_url": completion_url(code)}
         return {}
 
+    @bp.get("/typ/consent_text")
+    def consent_text():
+        # the consent page's text (its display blocks, not the checkbox), re-read on every request so it
+        # always matches the consent page; the task page shows it behind the "home" icon
+        blocks = [json.loads(line) for line in CONSENT_FILE.read_text(encoding="utf-8").splitlines() if line.strip()]
+        return jsonify({"html": "".join(b.get("description", "") for b in blocks if b.get("annotation_type") == "pure_display")})
+
     def current_sid():
         sid = session.get("username")
         if not sid:
@@ -219,7 +239,7 @@ def make_blueprint(typ: TypStudy, is_admin) -> Blueprint:
     def rate():
         sid = current_sid()
         body = request.get_json(silent=True) or {}
-        i_trial, value = body.get("i_trial"), body.get("value")
+        i_trial, value, skip = body.get("i_trial"), body.get("value"), body.get("skip") is True
         rt_ms, first_touch_ms = body.get("rt_ms"), body.get("first_touch_ms")
         if type(i_trial) is not int or not _ms(rt_ms) or not _ms(first_touch_ms):
             abort(400, "need an integer i_trial; rt_ms and first_touch_ms are milliseconds")
@@ -230,9 +250,9 @@ def make_blueprint(typ: TypStudy, is_admin) -> Blueprint:
                 # stale or repeated answer (double click, second tab): ignore it, tell the page where we are
                 resp = typ.done_payload(meta) if s.done else {"done": False}
                 return jsonify({**resp, "stale": True, "i_trial": s.i_trial}), 409
-            if not s.valid_value(value):
+            if not skip and not s.valid_value(value):
                 abort(400, "value outside the scale or off its step")
-            typ.record(sid, s, meta, value, rt_ms, first_touch_ms)
+            typ.record(sid, s, meta, value, rt_ms, first_touch_ms, skip)
             return jsonify({**(typ.done_payload(meta) if s.done else {"done": False}), "i_trial": s.i_trial})
 
     def admin_rows():

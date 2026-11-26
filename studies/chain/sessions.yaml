@@ -9,7 +9,6 @@ output_root: responses_data
 host: 127.0.0.1
 port: 8100
 threads: 16                 # waitress worker threads
-no_consent_code: NOCONSENT  # Prolific code for participants who decline consent (set its action on Prolific)
 abandon_after_min: 30       # monitoring: an unfinished session with no answer for this long shows as abandoned
 
 specs:

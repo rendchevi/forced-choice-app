@@ -1,0 +1,19 @@
+att_id,stimulus,answer
+att01,"This is an attention check, please move the slider all the way to the right end.",max
+att02,"This is an attention check, please move the slider all the way to the left end.",min
+att03,"To show you are reading carefully, ignore the question and set the slider to its far right end.",max
+att04,"To show you are reading carefully, ignore the question and set the slider to its far left end.",min
+att05,"Attention check, drag the slider fully to the right, as far as it goes.",max
+att06,"Attention check, drag the slider fully to the left, as far as it goes.",min
+att07,Please ignore the rating task and push the slider to the right most position.,max
+att08,Please ignore the rating task and push the slider to the left most position.,min
+att09,"We want to make sure you are paying attention, set the slider to the maximum value.",max
+att10,"We want to make sure you are paying attention, set the slider to the minimum value.",min
+att11,"Instead of rating, simply move the handle to the far right of the scale to show that you are still paying attention.",max
+att12,"Instead of rating, simply move the handle to the far left of the scale to show that you are still paying attention.",min
+att13,"Quality check for this item, select the highest possible value on the slider.",max
+att14,"Quality check for this item, select the lowest possible value on the slider.",min
+att15,"If you are reading this, do not rate anything, just slide all the way to the right.",max
+att16,"If you are reading this, do not rate anything, just slide all the way to the left.",min
+att17,"Reading check, the correct response here is the extreme right end of the slider.",max
+att18,"Reading check, the correct response here is the extreme left end of the slider.",min

@@ -4,15 +4,17 @@
 
 Runs on a throwaway copy of this study folder (own study_id, port and data folder), so the real
 data, Potato state and running servers are never touched. Each participant: Prolific entry URL
--> consent ("I agree") -> the jsPsych page -> /chain/next -> one /chain/choose per trial, with a
+-> consent (agree) -> the jsPsych page -> /chain/next -> one /chain/choose per trial, with a
 think time of think * U(0.5, 1.5) seconds before each answer. Reports latency per request type,
 errors, and whether every session's data is complete on disk.
 """
 
 import argparse
+import html
 import http.cookiejar
 import json
 import random
+import re
 import shutil
 import socket
 import statistics
@@ -62,18 +64,20 @@ class Participant:
 
     def run(self):
         ids = f"PROLIFIC_PID={self.pid}&STUDY_ID={'5' * 24}&SESSION_ID={self.i + 10**6:024x}"
-        self.call("entry", f"/?{ids}&spec={self.spec}")
-        self.call("consent", "/updateinstance", {"instance_id": "__phase_page__",
-                                                 "annotations": {"consent_agree:::I agree": "true"}})
+        _, page = self.call("entry", f"/?{ids}&spec={self.spec}")
+        # the consent answer: a checkbox (its input is named consent_agree:::<label>) or the radio "I agree"
+        m = re.search(r'name="(consent_agree:::[^"]+)"', page.decode())
+        key = html.unescape(m[1]) if m else "consent_agree:::I agree"
+        self.call("consent", "/updateinstance", {"instance_id": "__phase_page__", "annotations": {key: "true"}})
         self.call("consent", "/annotate", {"action": "next_instance", "instance_id": "__phase_page__"})
         self.call("page", "/")
         status, raw = self.call("next", "/chain/next")
         t = json.loads(raw) if status == 200 else {"done": True}
         while not t["done"]:
             time.sleep(self.think * self.rng.uniform(0.5, 1.5))
-            side = self.rng.choice(["left", "right"])
+            side = "skip" if self.rng.random() < 0.05 else self.rng.choice(["left", "right"])   # some skips too
             status, raw = self.call("choose", "/chain/choose",
-                                    {"i_trial": t["trial"]["i_trial"], "side": side, "rt_ms": 1000})
+                                    {"seq": t["trial"]["seq"], "side": side, "rt_ms": 1000})
             if status != 200:
                 return
             t = json.loads(raw)

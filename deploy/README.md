@@ -40,9 +40,10 @@ Check from outside: `https://chain.reneren.xyz/?sid=test1--spec=<spec>--chain=1`
 - Typicality:
   `https://typicality.reneren.xyz/?PROLIFIC_PID={{%PROLIFIC_PID%}}&STUDY_ID={{%STUDY_ID%}}&SESSION_ID={{%SESSION_ID%}}`
 
-On Prolific, choose "I'll use URL parameters", and add two completion codes: the study's
-`completion_code` (action: manually review) and `no_consent_code` (participants who decline
-consent; action e.g. "Request return").
+On Prolific, choose "I'll use URL parameters", and add the study's
+`completion_code` (action: manually review). Typicality only (its consent page still has a
+decline option): also add `no_consent_code` (action e.g. "Request return"). The chain consent
+page has a single checkbox; someone who does not consent returns the study themselves.
 
 ## Monitoring
 

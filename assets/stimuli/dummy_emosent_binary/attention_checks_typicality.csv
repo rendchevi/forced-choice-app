@@ -1,0 +1,7 @@
+att_id,stimulus,answer
+att_typ01,This is an attention check. Please move the slider all the way to the RIGHT end.,max
+att_typ02,This is an attention check. Please move the slider all the way to the LEFT end.,min
+att_typ03,"To show you are reading carefully, ignore the question and set the slider to its far RIGHT end.",max
+att_typ04,"To show you are reading carefully, ignore the question and set the slider to its far LEFT end.",min
+att_typ05,"Attention check: drag the slider fully to the RIGHT, as far as it goes.",max
+att_typ06,"Attention check: drag the slider fully to the LEFT, as far as it goes.",min

@@ -13,7 +13,7 @@ assets/stimuli/<stimuli_name>/       shared by both studies
   stimuli.csv                        stimulus_id, stimulus, ref_label
   <graph_name>.json                  networkx node-link graphs (chain proposals)
   attention_checks_choice.csv        chain: att_id, stimulus_A, stimulus_B, answer (A = left)
-  attention_checks_typicality.json   typicality: [{att_id, stimulus, answer: min|max}]
+  attention_checks_typicality.csv    typicality: att_id, stimulus, answer (min|max)
 studies/chain/                       one folder per study, self-contained
 studies/typicality/
 ```
@@ -31,10 +31,21 @@ are stored in `responses_data/<study_id>/<PROLIFIC_PID>/prolific.json` and in ea
 `session.json` (`prolific`). Test links with `?sid=...` work as before; opening a URL with a
 different `sid` logs the previous session out.
 
-**Consent.** Each study starts with Potato's consent page (`surveyflow/consent.jsonl`,
-placeholder text to be replaced by the approved ethics text; `surveyflow/consent.css` hides
-Potato's navigation bar). "I do not agree" ends the study on `templates/done.html`, which sends
-Prolific participants back with `no_consent_code`.
+**Consent.** Each study starts with Potato's consent page (`surveyflow/consent.jsonl`, styled by
+`surveyflow/consent.css` like the task pages; Potato's theme is forced light). Chain: the approved
+summary text, one required checkbox, and a link to the full Information Sheet & Consent Form,
+served from `surveyflow/information_sheet.pdf` at `/information_sheet.pdf` (replace that file to
+update it; no restart needed). Someone who does not consent closes the page and returns the study
+on Prolific. Typicality: placeholder text with "I agree / I do not agree"; declining ends the
+study on `templates/done.html`, which sends Prolific participants back with `no_consent_code`.
+
+**On the task pages.** "Questions? Message us on Prolific" sits right of "Progress N%"; under
+the question a small note says there are no best, right or wrong answers. Under the items,
+"Feeling uncomfortable with these items?" opens "Would you like to skip this item?" (Yes/No).
+A skip is not an answer: chain — the chain stays at $x$ and gets a new proposal (at a chain's
+first draw it also gets a new starting stimulus), the draw is repeated; typicality — the item
+is not rated. Skips are listed in `session.json` (`skips`) and `export--skips.csv`, not in
+`trials.jsonl`. Skipping an attention check counts as a wrong answer (recorded as a trial).
 
 **End.** The last screen shows the completion code; Prolific participants are sent back to
 `https://app.prolific.com/submissions/complete?cc=<code>` after 5 s (or with the button).
@@ -91,7 +102,7 @@ Do not use `potato start`: it would not add the `/chain/*` routes.
 | `run.py` | Starts Potato (`create_app`) with the chain blueprint, served by waitress |
 | `prolific.py` | Prolific ids → session id, completion URL |
 | `surveyflow/` | Consent page and its CSS |
-| `templates/done.html` | Page after declining consent |
+| `surveyflow/information_sheet.pdf` | Full Information Sheet & Consent Form linked from the consent page |
 | `loadtest.py` | Simulated participants against a throwaway copy |
 | `chain_core.py` | Specs, asset loading/checks, session id, one session's trials (no Flask) |
 | `chain_server.py` | `/chain/next`, `/chain/choose`, `/chain/admin`, storage |
@@ -120,6 +131,11 @@ specs:
 ```
 
 Everything is loaded and checked at boot, so a bad spec stops the server before anyone arrives.
+
+**Too few attention items** (both studies): if a session needs $K$ checks but the file has
+$M<K$ items, items are reused evenly: rounds of all $M$ items in random order (the last round
+cut short), so each item appears at most $\lceil K/M\rceil$ times and never twice in a row.
+The boot log warns when this happens; `att_id` in the data shows the reuse.
 
 ### The proposal (`graph/dmcmcp`)
 
@@ -181,10 +197,10 @@ cd studies/typicality && python run.py        # reads study.yaml; serves on 127.
   be approved manually.
 - **Participant URL**: `http://127.0.0.1:8200/?sid=<user_id>--run=<k>`, `k` = repetition
   (same `user_id` as in the chain study). Same URL again resumes (also after a server restart).
-- **Variables**: `study.yaml` (`study_id`, `stimuli_name`, `question`, `min_value`, `max_value`,
+- **Variables**: `study.yaml` (`study_id`, `stimuli_name`, `n_attention`, `question`, `min_value`, `max_value`,
   `step`, `left_label`, `right_label`, `completion_code`, paths, host, port).
 - **Order and attention checks** (`order.py`): stimuli shuffled per session (seeded by study
-  and `sid`, so reproducible); check $k$ of $K$ from `attention_checks_typicality.json` comes
+  and `sid`, so reproducible); check $k$ of $K$ (`n_attention`, picked from `attention_checks_typicality.csv`) comes
   after stimulus $\lfloor kn/(K+1) \rfloor$. The instruction sits in the stimulus slot ("move the
   slider all the way to the RIGHT end") under the usual question; the server grades it
   (`answer: min|max` = exactly that end of the scale). Nobody is warned or stopped: the

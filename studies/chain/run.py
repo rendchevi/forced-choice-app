@@ -18,7 +18,6 @@ ROOT = Path(__file__).resolve().parent
 def main(study_path="sessions.yaml"):
     os.chdir(ROOT)  # Potato resolves task_dir and every path in config.yaml from here
     sys.path.insert(0, str(ROOT))
-    from jinja2 import ChoiceLoader, FileSystemLoader
     from potato.flask_server import create_app
     from potato.server_utils.admin_key import validate_admin_api_key
     from potato.server_utils.config_module import config as potato_config
@@ -33,8 +32,6 @@ def main(study_path="sessions.yaml"):
     # each study has its own cookie: browsers share cookies across ports, so two studies on one
     # host would otherwise log each other out
     app.config["SESSION_COOKIE_NAME"] = "session_chain"
-    # templates/done.html replaces Potato's completion page, which only declining consent reaches
-    app.jinja_env.loader = ChoiceLoader([FileSystemLoader(str(ROOT / "templates")), app.jinja_env.loader])
     app.register_blueprint(make_blueprint(chain, lambda key: validate_admin_api_key(key, potato_config)))
     logging.getLogger(__name__).info("chain study %s: specs %s, data in %s", chain.study_id, list(specs), chain.root)
     from waitress import serve

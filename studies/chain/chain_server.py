@@ -20,15 +20,17 @@ import threading
 import time
 from pathlib import Path
 
-from flask import Blueprint, Response, abort, jsonify, redirect, request, session
+from flask import Blueprint, Response, abort, jsonify, redirect, request, send_file, session
 
-from chain_core import (SIDES, Session, build_proposal, check_spec_assets, load_assets, parse_sid,
+from chain_core import (SIDES, SKIP, Session, attention_shortfall, build_proposal, check_spec_assets, load_assets, parse_sid,
                         session_files, session_seed)
-from prolific import assign_sid, completion_url, ids_for_sid, is_prolific_user, prolific_ids
+from prolific import assign_sid, completion_url, ids_for_sid, prolific_ids
 
 log = logging.getLogger(__name__)
 
 MAX_RT_MS = 24 * 3600 * 1000
+INFO_SHEET = Path(__file__).resolve().parent / "surveyflow" / "information_sheet.pdf"
+CONSENT_FILE = Path(__file__).resolve().parent / "surveyflow" / "consent.jsonl"
 
 
 def _write_json_atomic(path: Path, obj):
@@ -42,13 +44,13 @@ class ChainStudy:
         self.study_id = study["study_id"]
         self.root = Path(study["output_root"]) / self.study_id
         self.specs = specs
-        self.no_consent_code = study["no_consent_code"]
         self.abandon_after_s = 60 * study["abandon_after_min"]
         self.assets, self.proposals = {}, {}
         for spec in specs.values():  # load everything at boot so a bad spec fails before anyone arrives
-            self.assets[spec.name] = load_assets(study["assets_root"], spec.stimuli_name, spec.graph_name,
-                                                 spec.n_attention * spec.n_chain)
+            self.assets[spec.name] = load_assets(study["assets_root"], spec.stimuli_name, spec.graph_name)
             check_spec_assets(spec, self.assets[spec.name])
+            if attention_shortfall(spec, self.assets[spec.name]):
+                log.warning(attention_shortfall(spec, self.assets[spec.name]))
             self.proposals[spec.name] = build_proposal(spec, self.assets[spec.name])
             for w in self.proposals[spec.name].check():
                 log.warning("spec %s: %s", spec.name, w)
@@ -82,7 +84,7 @@ class ChainStudy:
             if meta["asset_sha256"] != self.assets[spec_name].sha256:
                 log.warning("%s: asset files changed since the session started", sid)
             records = [json.loads(line) for line in (folder / "trials.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
-            s.replay(records)
+            s.replay(records, meta.get("skips", []))
         else:
             folder.mkdir(parents=True, exist_ok=True)
             (folder / "trials.jsonl").touch()
@@ -91,7 +93,8 @@ class ChainStudy:
                     "prolific": ids_for_sid(self.root, user_id, sid),
                     "status": "in_progress", "started": time.time(), "updated": None, "finished": None,
                     "n_trials": s.n_trials, "n_trials_done": 0, "n_draw_done": 0,
-                    "attention_correct": 0, "attention_done": 0, "attention_passed": None, "median_rt_ms": None}
+                    "attention_correct": 0, "attention_done": 0, "attention_passed": None, "median_rt_ms": None,
+                    "skips": []}   # skipped chain pairs: not draws, not in trials.jsonl
             records = []
             _write_json_atomic(meta_path, meta)
         meta["_lock"] = threading.Lock()   # one answer at a time per session; sessions run in parallel
@@ -101,7 +104,8 @@ class ChainStudy:
 
     def payload(self, s: Session, meta: dict):
         """The trial on screen plus, for each side, the trial it leads to (None = the session ends)."""
-        brief = lambda t: None if t is None else {"i_trial": t["i_trial"], "left": t["left_text"], "right": t["right_text"]}
+        brief = lambda t: None if t is None else {"i_trial": t["i_trial"], "seq": t["seq"],
+                                                  "left": t["left_text"], "right": t["right_text"]}
         if s.done:  # the code is only ever sent to a session that has answered every trial
             code = s.spec.completion_code
             return {"done": True, "completion_code": code,
@@ -111,6 +115,15 @@ class ChainStudy:
 
     def record(self, sid, s: Session, meta: dict, side: str, rt_ms):
         now = time.time()
+        folder = self.folder(meta["user_id"], meta["spec"]["name"])
+        if side == SKIP and s.pending["trial_type"] == "chain":
+            # a skipped pair is not a draw: it goes in session.json, not trials.jsonl
+            event = s.skip()
+            event.update(rt_ms=rt_ms, t_skipped=now)
+            meta["skips"].append(event)
+            meta["_prev"] = meta["updated"] = now
+            _write_json_atomic(folder / "session.json", {k: v for k, v in meta.items() if not k.startswith("_")})
+            return
         rec = s.choose(side)
         # the page shows the next pair before the server hears about the click, so the server
         # cannot time a trial itself; server_ms is the gap since the previous answer (or page load)
@@ -119,7 +132,6 @@ class ChainStudy:
         rec.update(user_id=meta["user_id"], sid=sid, rt_ms=rt_ms,
                    server_ms=round((now - prev) * 1000) if prev else None,
                    t_prev=prev, t_answered=now)
-        folder = self.folder(meta["user_id"], meta["spec"]["name"])
         with open(folder / "trials.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
             f.flush()
@@ -150,7 +162,7 @@ class ChainStudy:
                          "draws": f'{m["n_draw_done"]}/{sp["n_draw"] * sp["n_chain"]} ({sp["n_chain"]} chains)',
                          "attention": f'{m["attention_correct"]}/{m["attention_done"]} '
                                       f'(need {sp["attention_pass"] * sp["n_chain"]}/{sp["n_attention"] * sp["n_chain"]})',
-                         "median_rt_ms": m["median_rt_ms"],
+                         "median_rt_ms": m["median_rt_ms"], "skips": len(m.get("skips", [])),
                          "duration_min": round(((m["finished"] or last) - m["started"]) / 60, 1),
                          "started": _fmt_time(m["started"]), "last_activity": _fmt_time(last),
                          "finished": _fmt_time(m["finished"]),
@@ -200,14 +212,19 @@ def make_blueprint(chain: ChainStudy, is_admin) -> Blueprint:
             session.clear()
         return None
 
-    @bp.app_context_processor
-    def exit_link():
-        # templates/done.html is only reached by declining consent; Prolific participants go back
-        # to Prolific with the no-consent code
-        parsed = parse_sid(session.get("username") or "")
-        if parsed and is_prolific_user(parsed[0]) and chain.no_consent_code:
-            return {"exit_url": completion_url(chain.no_consent_code)}
-        return {}
+    @bp.get("/information_sheet.pdf")
+    def information_sheet():
+        # the full Information Sheet & Consent Form linked from the consent page; replace the file to update it
+        if not INFO_SHEET.is_file():
+            abort(404)
+        return send_file(INFO_SHEET, mimetype="application/pdf", max_age=0)
+
+    @bp.get("/chain/consent_text")
+    def consent_text():
+        # the consent page's text (its display blocks, not the checkbox), re-read on every request so it
+        # always matches the consent page; the task page shows it behind the "home" icon
+        blocks = [json.loads(line) for line in CONSENT_FILE.read_text(encoding="utf-8").splitlines() if line.strip()]
+        return jsonify({"html": "".join(b.get("description", "") for b in blocks if b.get("annotation_type") == "pure_display")})
 
     def current_sid():
         sid = session.get("username")
@@ -228,15 +245,15 @@ def make_blueprint(chain: ChainStudy, is_admin) -> Blueprint:
     def choose():
         sid = current_sid()
         body = request.get_json(silent=True) or {}
-        side, i_trial, rt_ms = body.get("side"), body.get("i_trial"), body.get("rt_ms")
-        if side not in SIDES or type(i_trial) is not int:
-            abort(400, "need side in ('left','right') and an integer i_trial")
+        side, seq, rt_ms = body.get("side"), body.get("seq"), body.get("rt_ms")
+        if side not in SIDES + (SKIP,) or type(seq) is not int:
+            abort(400, "need side in ('left','right','skip') and an integer seq")
         if rt_ms is not None and (type(rt_ms) not in (int, float) or not math.isfinite(rt_ms) or not 0 <= rt_ms <= MAX_RT_MS):
             abort(400, "rt_ms must be a number of milliseconds")
         with chain.lock:
             s, meta = chain.get(sid)
         with meta["_lock"]:
-            if s.done or i_trial != s.pending["i_trial"]:
+            if s.done or seq != s.pending["seq"]:
                 # stale or repeated answer (double click, second tab): ignore it and resend the current state
                 resp = chain.payload(s, meta)
                 resp["stale"] = True

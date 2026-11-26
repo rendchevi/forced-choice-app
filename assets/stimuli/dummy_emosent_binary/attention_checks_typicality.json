@@ -1,8 +1,0 @@
-[
-  {"att_id": "att_typ01", "stimulus": "This is an attention check. Please move the slider all the way to the RIGHT end.", "answer": "max"},
-  {"att_id": "att_typ02", "stimulus": "This is an attention check. Please move the slider all the way to the LEFT end.", "answer": "min"},
-  {"att_id": "att_typ03", "stimulus": "To show you are reading carefully, ignore the question and set the slider to its far RIGHT end.", "answer": "max"},
-  {"att_id": "att_typ04", "stimulus": "To show you are reading carefully, ignore the question and set the slider to its far LEFT end.", "answer": "min"},
-  {"att_id": "att_typ05", "stimulus": "Attention check: drag the slider fully to the RIGHT, as far as it goes.", "answer": "max"},
-  {"att_id": "att_typ06", "stimulus": "Attention check: drag the slider fully to the LEFT, as far as it goes.", "answer": "min"}
-]

@@ -15,9 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import networkx as nx
-from flask import Flask, render_template_string, session
+from flask import Flask, session
 
-from chain_core import (Session, Spec, attention_after, load_assets, parse_sid,
+from chain_core import (Session, Spec, attention_after, load_assets, parse_sid, pick_attention,
                         session_seed)
 from chain_server import ChainStudy, make_blueprint
 from prolific import prolific_ids
@@ -36,7 +36,7 @@ def spec(**kw):
 
 def new_session(seed=1, **kw):
     sp = spec(**kw)
-    assets = load_assets(ASSETS, sp.stimuli_name, sp.graph_name, sp.n_attention)
+    assets = load_assets(ASSETS, sp.stimuli_name, sp.graph_name)
     return Session(sp, assets, DMCMCP(assets.graph, **sp.propose_params), seed)
 
 
@@ -155,7 +155,7 @@ class TestCore(unittest.TestCase):
         self.assertEqual(attention_after(20, 0), [])
 
     def test_assets_match_graph(self):
-        a = load_assets(ASSETS, STIM, "exhaustive_graph", 3)
+        a = load_assets(ASSETS, STIM, "exhaustive_graph")
         self.assertEqual(set(a.graph.nodes), set(a.stimuli))
         self.assertEqual(len(a.attention), 10)
 
@@ -202,8 +202,82 @@ class TestCore(unittest.TestCase):
     def test_n_chain_must_fit_the_assets(self):
         with self.assertRaises(ValueError):
             new_session(n_chain=24)                                              # 23 stimuli
+
+    def test_too_few_attention_items_are_reused_evenly(self):
+        s = new_session(n_draw=5, n_chain=4, n_attention=3)                      # 12 checks, 10 items
+        ids = [what["att_id"] for kind, what in s.schedule if kind == "attention"]
+        self.assertEqual(len(ids), 12)
+        self.assertEqual(len(set(ids)), 10)                                      # every item used
+        self.assertLessEqual(max(Counter(ids).values()), 2)                      # at most ceil(12/10)
+        self.assertTrue(all(a != b for a, b in zip(ids, ids[1:])))               # never twice in a row
+
+    def test_pick_attention(self):
+        items = [{"att_id": i} for i in range(3)]
+        for k in range(0, 20):
+            for seed in range(30):
+                got = [it["att_id"] for it in pick_attention(items, k, random.Random(seed))]
+                self.assertEqual(len(got), k)
+                if k:
+                    self.assertLessEqual(max(Counter(got).values()), -(-k // 3))
+                self.assertTrue(all(a != b for a, b in zip(got, got[1:])), (k, seed, got))
+        rng_a, rng_b = random.Random(1), random.Random(1)
+        self.assertEqual(pick_attention(items, 2, rng_a), rng_b.sample(items, 2))   # k <= M: plain sample
         with self.assertRaises(ValueError):
-            new_session(n_chain=4, n_attention=3)                                # 12 checks, 10 items
+            pick_attention([], 1, random.Random(0))
+
+    def test_skip_mid_chain_keeps_x_and_is_not_a_draw(self):
+        s = new_session(seed=21, n_draw=5, n_chain=1, n_attention=0, attention_pass=0)
+        s.choose("left")
+        t = s.pending
+        ev = s.skip()
+        self.assertEqual((ev["i_trial"], ev["i_draw"], ev["x_id"], ev["x_star_id"]), (t["i_trial"], t["i_draw"], t["x_id"], t["x_star_id"]))
+        u = s.pending
+        self.assertEqual((u["i_trial"], u["i_draw"], u["x_id"], u["n_rejected"]), (t["i_trial"], t["i_draw"], t["x_id"], t["n_rejected"]))
+        self.assertEqual(u["seq"], t["seq"] + 1)
+        n = 0
+        while not s.done:
+            s.choose("right")
+            n += 1
+        self.assertEqual(n, 4)                                                   # still n_draw - 1 more draws
+
+    def test_skip_at_first_draw_gives_a_new_start(self):
+        s = new_session(seed=22, n_draw=3, n_chain=2, n_attention=0, attention_pass=0)
+        t = s.pending
+        s.skip()
+        u = s.pending
+        self.assertEqual((u["i_draw"], u["chain_idx"]), (0, 0))
+        self.assertNotIn(u["x_id"], (t["x_id"], t["x_star_id"], s.starts[1]))   # new start, distinct from the other chain's
+        s.skip()
+        self.assertNotIn(s.pending["x_id"], (t["x_id"], u["x_id"]))             # skipped starts never come back
+
+    def test_skip_on_attention_counts_as_wrong(self):
+        s = new_session(seed=2, n_draw=2, n_attention=1, attention_pass=1)
+        while s.pending["trial_type"] != "attention":
+            s.choose("left")
+        rec = s.skip()
+        self.assertEqual((rec["trial_type"], rec["chosen_side"], rec["correct"]), ("attention", "skip", False))
+        with self.assertRaises(ValueError):
+            new_session().choose("skip")                                         # chain trials skip via skip()
+
+    def test_peek_skip_branch_and_replay_with_skips(self):
+        a = new_session(seed=23, n_draw=6, n_chain=2, n_attention=1, attention_pass=1)
+        rng, recs, skips = random.Random(5), [], []
+        while not a.done:
+            ahead = a.peek()
+            if a.pending["trial_type"] == "chain" and rng.random() < 0.3:
+                skips.append(a.skip())
+                self.assertEqual(a.pending, ahead["skip"])
+            else:
+                side = rng.choice(["left", "right"])
+                recs.append(a.choose(side))
+                self.assertEqual(a.pending, ahead[side])
+        self.assertTrue(skips)
+        b = new_session(seed=23, n_draw=6, n_chain=2, n_attention=1, attention_pass=1)
+        b.replay(recs, skips)
+        self.assertTrue(b.done)
+        c = new_session(seed=23, n_draw=6, n_chain=2, n_attention=1, attention_pass=1)
+        with self.assertRaises(ValueError):
+            c.replay(recs)                                                       # skips are part of the history
 
     def test_order_is_randomised(self):
         s = new_session(seed=5, n_draw=200, n_attention=0, attention_pass=0)
@@ -247,7 +321,7 @@ class TestServer(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         study = {"study_id": "test", "output_root": self.tmp.name, "assets_root": str(ASSETS),
-                 "no_consent_code": "NOC", "abandon_after_min": 30}
+                 "abandon_after_min": 30}
         self.specs = {"s": spec(name="s", n_draw=4, n_chain=2, n_attention=1, attention_pass=1, completion_code="CODE1")}
         self.chain = ChainStudy(study, self.specs)
         self.app = Flask(__name__)
@@ -267,7 +341,7 @@ class TestServer(unittest.TestCase):
         t = self.client.get("/chain/next").get_json()
         n = 0
         while not t["done"]:
-            t = self.client.post("/chain/choose", json={"i_trial": t["trial"]["i_trial"], "side": "left", "rt_ms": 1234}).get_json()
+            t = self.client.post("/chain/choose", json={"seq": t["trial"]["seq"], "side": "left", "rt_ms": 1234}).get_json()
             n += 1
         return n
 
@@ -298,7 +372,7 @@ class TestServer(unittest.TestCase):
         while not t["done"]:
             side = "right" if t["trial"]["i_trial"] % 2 else "left"
             promised = t["next"][side]
-            t = self.client.post("/chain/choose", json={"i_trial": t["trial"]["i_trial"], "side": side, "rt_ms": 1}).get_json()
+            t = self.client.post("/chain/choose", json={"seq": t["trial"]["seq"], "side": side, "rt_ms": 1}).get_json()
             if t["done"]:
                 self.assertIsNone(promised)
             else:
@@ -315,19 +389,36 @@ class TestServer(unittest.TestCase):
     def test_bad_input_and_stale_answer(self):
         self.login("u1--spec=s")
         t = self.client.get("/chain/next").get_json()
-        for body in [{"i_trial": 0, "side": "up"}, {"i_trial": "0", "side": "left"},
-                     {"i_trial": 0, "side": "left", "rt_ms": -5}, {"i_trial": 0, "side": "left", "rt_ms": "fast"}]:
+        for body in [{"seq": 0, "side": "up"}, {"seq": "0", "side": "left"}, {"i_trial": 0, "side": "left"},
+                     {"seq": 0, "side": "left", "rt_ms": -5}, {"seq": 0, "side": "left", "rt_ms": "fast"}]:
             self.assertEqual(self.client.post("/chain/choose", json=body).status_code, 400, body)
-        ok = self.client.post("/chain/choose", json={"i_trial": t["trial"]["i_trial"], "side": "left", "rt_ms": 10})
+        ok = self.client.post("/chain/choose", json={"seq": t["trial"]["seq"], "side": "left", "rt_ms": 10})
         self.assertEqual(ok.status_code, 200)
-        again = self.client.post("/chain/choose", json={"i_trial": t["trial"]["i_trial"], "side": "left", "rt_ms": 10})
+        again = self.client.post("/chain/choose", json={"seq": t["trial"]["seq"], "side": "left", "rt_ms": 10})
         self.assertEqual(again.status_code, 409)            # double click is not recorded twice
         self.assertEqual(again.get_json()["trial"]["i_trial"], t["trial"]["i_trial"] + 1)
+
+    def test_skip_over_http(self):
+        self.login("u5--spec=s")
+        t = self.client.get("/chain/next").get_json()
+        promised = t["next"]["skip"]
+        r = self.client.post("/chain/choose", json={"seq": t["trial"]["seq"], "side": "skip", "rt_ms": 30})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["trial"], promised)
+        again = self.client.post("/chain/choose", json={"seq": t["trial"]["seq"], "side": "skip", "rt_ms": 30})
+        self.assertEqual(again.status_code, 409)                                 # double click: one skip only
+        folder = Path(self.tmp.name) / "test" / "u5" / "spec=s"
+        meta = json.loads((folder / "session.json").read_text())
+        self.assertEqual(len(meta["skips"]), 1)
+        self.assertEqual((folder / "trials.jsonl").read_text(), "")              # not a trial
+        self.chain.sessions.clear()                                              # restart: the skip is replayed
+        self.assertEqual(self.client.get("/chain/next").get_json()["trial"], promised)
+        self.assertEqual(self.chain.summaries()[0]["skips"], 1)
 
     def test_resume_after_restart(self):
         self.login("u2--spec=s")
         t = self.client.get("/chain/next").get_json()
-        t = self.client.post("/chain/choose", json={"i_trial": t["trial"]["i_trial"], "side": "right", "rt_ms": 5}).get_json()
+        t = self.client.post("/chain/choose", json={"seq": t["trial"]["seq"], "side": "right", "rt_ms": 5}).get_json()
         self.chain.sessions.clear()                          # what a restart loses
         after = self.client.get("/chain/next").get_json()
         self.assertEqual(after["trial"], t["trial"])
@@ -410,13 +501,16 @@ class TestProlific(unittest.TestCase):
                          "https://app.prolific.com/submissions/complete?cc=CODE1")
         self.assertEqual(self.chain.summaries()[0]["prolific_study_id"], STUDY)
 
-    def test_no_consent_exit_link(self):
-        page = "{{ exit_url | default('') }}"
-        with self.app.test_request_context("/"):
-            session["username"] = f"{PID}--spec=s"
-            self.assertEqual(render_template_string(page), "https://app.prolific.com/submissions/complete?cc=NOC")
-            session["username"] = "u1--spec=s"
-            self.assertEqual(render_template_string(page), "")
+    def test_consent_text_for_the_home_icon(self):
+        html = self.client.get("/chain/consent_text").get_json()["html"]
+        self.assertTrue(html.strip().startswith("<"))
+        self.assertNotIn("consent_agree", html)                                  # text only, not the checkbox
+
+    def test_information_sheet_pdf(self):
+        r = self.client.get("/information_sheet.pdf")
+        self.assertEqual((r.status_code, r.mimetype), (200, "application/pdf"))
+        self.assertTrue(r.data.startswith(b"%PDF"))
+        r.close()
 
 
 if __name__ == "__main__":

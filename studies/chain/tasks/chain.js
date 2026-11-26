@@ -41,7 +41,24 @@ window.potatoTimeline = function (jsPsych, potato) {
     'border-radius:6px;cursor:pointer}' +
     '.chain-opt:hover{border-color:#666;background:#fafafa}' +
     '.chain-opt:focus{outline:none}.chain-opt:focus-visible{outline:3px solid #93c5fd}' +
-    '.chain-progress{font-size:clamp(13px,0.95vw,20px);color:#888;text-align:left;margin-bottom:.5em}' +
+    '.chain-top{display:flex;justify-content:space-between;align-items:center;gap:1em;font-size:clamp(13px,0.95vw,20px);color:#bbb;margin-bottom:.5em}' +
+    '.chain-home{background:none;border:0;padding:0 .5em 0 0;color:#bbb;cursor:pointer;vertical-align:middle;line-height:0}' +
+    '.chain-home:hover{color:#888}' +
+    '.chain-dialog.chain-info{max-width:min(90vw,900px);max-height:85vh;overflow:auto;text-align:left;line-height:1.6}' +
+    '.chain-info h2{font-size:1.3em;margin:0 0 .8em}.chain-info h3{font-size:1.05em;margin:1.2em 0 .4em}' +
+    '.chain-info a{color:#6b5ccf}.chain-info .consent-note{display:none}' +
+    '.chain-info .chain-back{display:block;margin:1.4em auto 0}' +
+    '.chain-hint{font-size:clamp(13px,0.95vw,20px);color:#888;margin:-1.6vw auto 2.4vw;max-width:75vw}' +
+    '.chain-skip{display:block;margin:1.6vw auto 0;background:none;border:0;padding:.3em;font:inherit;' +
+    'font-size:clamp(13px,0.95vw,20px);color:#bbb;text-decoration:underline;cursor:pointer}' +
+    '.chain-skip:hover{color:#888}' +
+    '.chain-modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:10}' +
+    '.chain-modal[hidden]{display:none}' +
+    '.chain-dialog{background:#fff;border-radius:8px;padding:1.6em 2em;max-width:min(90vw,520px);text-align:center;' +
+    'font-size:clamp(16px,1.2vw,26px);box-shadow:0 6px 24px rgba(0,0,0,.2)}' +
+    '.chain-dialog p{margin:0 0 1.2em}' +
+    '.chain-dialog button{font:inherit;font-size:.95em;padding:.45em 1.4em;margin:0 .4em;border-radius:6px;cursor:pointer}' +
+    '.chain-yes{background:#6b5ccf;color:#fff;border:0}.chain-no{background:#fff;color:#222;border:1px solid #bbb}' +
     '.chain-bar{height:max(6px,0.45vw);background:#e5e5e5;border-radius:99px;overflow:hidden;margin-bottom:3vw}' +
     '.chain-bar>div{height:100%;width:0;background:#6b5ccf;transition:width 200ms ease-out}' +
     '.chain-end{font-size:clamp(18px,1.5vw,32px);line-height:1.6;max-width:60vw;margin:0 auto}' +
@@ -60,22 +77,36 @@ window.potatoTimeline = function (jsPsych, potato) {
     func: function (done) {
       var root = jsPsych.getDisplayElement();
       root.innerHTML =
-        '<div class="chain"><div class="chain-progress"></div>' +
+        '<div class="chain"><div class="chain-top"><span><button type="button" class="chain-home" aria-label="Study information" ' +
+          'title="Study information"><svg width=\'1.1em\' height=\'1.1em\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'currentColor\' stroke-width=\'2\' stroke-linecap=\'round\' stroke-linejoin=\'round\' aria-hidden=\'true\'><path d=\'M3 11l9-8 9 8\'/><path d=\'M5 10v10h14V10\'/></svg></button><span class="chain-progress"></span></span>' +
+        '<span>Questions? Message us on Prolific</span></div>' +
         '<div class="chain-bar" role="progressbar" aria-label="Progress"><div></div></div>' +
-        '<p class="chain-q"></p><div class="chain-pair">' +
+        '<p class="chain-q"></p>' +
+        '<p class="chain-hint">There are no &ldquo;best&rdquo;, &ldquo;right&rdquo;, or &ldquo;wrong&rdquo; answers here, ' +
+        'we are interested in your own, highly subjective opinion.</p><div class="chain-pair">' +
         '<button type="button" class="chain-opt" data-side="left"></button>' +
         '<button type="button" class="chain-opt" data-side="right"></button>' +
-        '</div></div>';
+        '</div><button type="button" class="chain-skip">Feeling uncomfortable with these items?</button></div>' +
+        '<div class="chain-modal" hidden><div class="chain-dialog" role="dialog" aria-modal="true">' +
+        '<p>Would you like to skip this item?</p>' +
+        '<button type="button" class="chain-yes">Yes</button><button type="button" class="chain-no">No</button>' +
+        '</div></div>' +
+        '<div class="chain-modal chain-infobox" hidden><div class="chain-dialog chain-info" role="dialog" aria-modal="true">' +
+        '<div class="chain-infotext">Loading…</div>' +
+        '<button type="button" class="chain-yes chain-back">Back to the task</button></div></div>';
       var question = root.querySelector('.chain-q');
       var pair = root.querySelector('.chain-pair');
       var bar = root.querySelector('.chain-bar');
       var progress = root.querySelector('.chain-progress');
+      var skipLink = root.querySelector('.chain-skip');
+      var modal = root.querySelector('.chain-modal');
+      var infobox = root.querySelector('.chain-infobox');
 
       function setProgress(j) {
-        var pct = nTrials ? Math.round(100 * j / nTrials) : 0;
+        var pct = nTrials ? 100 * j / nTrials : 0;
         bar.firstChild.style.width = pct + '%';
         bar.setAttribute('aria-valuenow', pct);
-        progress.textContent = 'Progress ' + pct + '%';
+        progress.textContent = 'Progress ' + pct.toFixed(2) + '%';
       }
       var button = {left: root.querySelector('[data-side=left]'), right: root.querySelector('[data-side=right]')};
 
@@ -130,12 +161,13 @@ window.potatoTimeline = function (jsPsych, potato) {
 
       function answer(side, rt) {
         if (!nextFor) { queued = [side, rt]; return; }
-        var i = shown.i_trial;
+        var seq = shown.seq;
         var next = nextFor[side];
         nextFor = null;
         if (next) { show(next); } else { pair.style.visibility = 'hidden'; setProgress(nTrials); }
-        call('POST', '/chain/choose', {i_trial: i, side: side, rt_ms: rt}).then(function (reply) {
-          if (reply.stale || reply.done || !next || reply.trial.i_trial !== next.i_trial) { sync(reply); return; }
+        // a skipped pair keeps its i_trial, so trials are told apart by seq
+        call('POST', '/chain/choose', {seq: seq, side: side, rt_ms: rt}).then(function (reply) {
+          if (reply.stale || reply.done || !next || reply.trial.seq !== next.seq) { sync(reply); return; }
           nextFor = reply.next;
           if (queued) { var q = queued; queued = null; answer(q[0], q[1]); }
         }).catch(fail);
@@ -143,10 +175,48 @@ window.potatoTimeline = function (jsPsych, potato) {
 
       ['left', 'right'].forEach(function (side) {
         button[side].addEventListener('click', function () {
-          if (!shown || ended || queued) { return; }
+          if (!shown || ended || queued || !modal.hidden || !infobox.hidden) { return; }
           answer(side, Math.max(0, Math.round(performance.now() - shownAt)));
         });
       });
+
+      // "Feeling uncomfortable with these items?" -> confirm -> the server puts a new pair on screen
+      // time spent in a dialog is not response time: shownAt moves forward by it
+      var pausedAt = null;
+      function pause() { if (pausedAt === null) { pausedAt = performance.now(); } }
+      function resume() { if (pausedAt !== null) { shownAt += performance.now() - pausedAt; pausedAt = null; } }
+
+      skipLink.addEventListener('click', function () {
+        if (!shown || ended || queued) { return; }
+        pause();
+        modal.hidden = false;
+        modal.querySelector('.chain-no').focus();
+      });
+      modal.querySelector('.chain-no').addEventListener('click', function () { modal.hidden = true; resume(); });
+      modal.querySelector('.chain-yes').addEventListener('click', function () {
+        modal.hidden = true;
+        resume();
+        if (!shown || ended || queued) { return; }
+        answer('skip', Math.max(0, Math.round(performance.now() - shownAt)));
+      });
+
+      // the "home" icon: the consent page's text (study information) over the task, then back
+      var infoLoaded = false;
+      root.querySelector('.chain-home').addEventListener('click', function () {
+        if (ended) { return; }
+        pause();
+        infobox.hidden = false;
+        infobox.querySelector('.chain-back').focus();
+        if (!infoLoaded) {
+          call('GET', '/chain/consent_text').then(function (r) {
+            infobox.querySelector('.chain-infotext').innerHTML = r.html;   // researcher-written HTML from consent.jsonl
+            infoLoaded = true;
+          }).catch(function () {
+            infobox.querySelector('.chain-infotext').textContent = 'The study information could not be loaded.';
+          });
+        }
+      });
+      infobox.querySelector('.chain-back').addEventListener('click', function () { infobox.hidden = true; resume(); });
 
       call('GET', '/chain/next').then(sync).catch(fail);
     }

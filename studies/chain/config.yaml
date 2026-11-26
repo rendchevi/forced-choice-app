@@ -27,10 +27,6 @@ phases:
     type: consent
     title: Consent
     file: surveyflow/consent.jsonl
-    exit_when:           # declining ends the study: templates/done.html sends Prolific participants back
-      show_when:
-        - {schema: consent_agree, operator: equals, value: "I do not agree"}
-      message: You chose not to take part in this study.
   chain:
     type: jspsych
     timeline: tasks/chain.js

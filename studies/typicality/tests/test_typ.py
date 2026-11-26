@@ -18,7 +18,7 @@ ASSETS = ROOT.parents[1] / "assets" / "stimuli"   # repo-level shared assets
 STUDY = {"study_id": "test", "stimuli_name": "dummy_emosent_binary", "assets_root": str(ASSETS),
          "question": "q?", "min_value": 0, "max_value": 100, "step": 1, "left_label": "lo", "right_label": "hi",
          "completion_code": "CODE9", "potato_config": "config.yaml", "output_root": "", "host": "x", "port": 0,
-         "threads": 1, "no_consent_code": "NOC", "abandon_after_min": 30}
+         "threads": 1, "no_consent_code": "NOC", "abandon_after_min": 30, "n_attention": 6}
 
 
 def new_session(sid="u1--run=1", **kw):
@@ -61,6 +61,31 @@ class TestCore(unittest.TestCase):
         before = [kinds[:i].count("stimulus") for i, k in enumerate(kinds) if k == "attention"]
         self.assertEqual(before, [3, 6, 9, 13, 16, 19])
         self.assertNotEqual([it["text"] for it in s.items], [it["text"] for it in new_session("u2--run=1").items])
+
+    def test_skip_stimulus_and_attention(self):
+        s = new_session()
+        first = s.items[0]
+        ev = s.skip()
+        self.assertEqual(ev, {"i_trial": 0, "stimulus_id": first["stimulus_id"]})
+        self.assertEqual(s.i_trial, 1)
+        while s.items[s.i_trial]["trial_type"] != "attention":
+            s.rate(50)
+        rec = s.skip()
+        self.assertEqual((rec["trial_type"], rec["correct"], rec["value"], rec["skipped"]), ("attention", False, None, True))
+
+    def test_replay_with_skips(self):
+        a, recs, skips = new_session(), [], []
+        for k in range(10):
+            if k % 3 == 0:
+                out = a.skip()
+                (recs if "trial_type" in out else skips).append(out)
+            else:
+                recs.append(a.rate(answer(a, a.items[a.i_trial])))
+        b = new_session()
+        b.replay(recs, skips)
+        self.assertEqual(b.i_trial, 10)
+        with self.assertRaises(ValueError):
+            new_session().replay(recs)                                           # skips are part of the history
 
     def test_values_checked(self):
         s = new_session(step=0.5)
@@ -149,6 +174,26 @@ class TestServer(unittest.TestCase):
         self.assertEqual(self.client.post("/typ/rate", json=ok).status_code, 200)
         again = self.client.post("/typ/rate", json=ok)                  # double click
         self.assertEqual((again.status_code, again.get_json()["i_trial"]), (409, 1))
+
+    def test_consent_text_for_the_home_icon(self):
+        html = self.client.get("/typ/consent_text").get_json()["html"]
+        self.assertTrue(html.strip().startswith("<"))
+        self.assertNotIn("consent_agree", html)                                  # text only, not the checkbox
+
+    def test_skip_over_http(self):
+        self.login("u3--run=1")
+        self.client.get("/typ/start")
+        r = self.client.post("/typ/rate", json={"i_trial": 0, "skip": True, "rt_ms": 40})
+        self.assertEqual((r.status_code, r.get_json()["i_trial"]), (200, 1))
+        again = self.client.post("/typ/rate", json={"i_trial": 0, "skip": True, "rt_ms": 40})
+        self.assertEqual(again.status_code, 409)                                 # double click: one skip only
+        folder = Path(self.tmp.name) / "test" / "u3" / "run=1"
+        meta = json.loads((folder / "session.json").read_text())
+        self.assertEqual([s["i_trial"] for s in meta["skips"]], [0])
+        self.assertEqual((folder / "trials.jsonl").read_text(), "")              # not a rating
+        self.typ.sessions.clear()                                                # restart: the skip is replayed
+        self.assertEqual(self.client.get("/typ/start").get_json()["i_trial"], 1)
+        self.assertEqual(self.typ.summaries()[0]["skips"], 1)
 
     def test_resume_after_restart(self):
         self.login("u2--run=1")

@@ -1,0 +1,25 @@
+# Study variables and session specs. One study = one file; a new study gets a new file and study_id.
+# Prolific study URL (one Prolific study per spec):
+#   https://<host>/?PROLIFIC_PID={{%PROLIFIC_PID%}}&STUDY_ID={{%STUDY_ID%}}&SESSION_ID={{%SESSION_ID%}}&spec=<spec name>
+# Test URL, one session:  /?sid=<user_id>--spec=<spec name>   (one session per user and spec)
+study_id: asu-nov-pilot-1--goemo
+potato_config: config.yaml
+assets_root: ../../assets/stimuli   # shared assets, relative to this folder
+output_root: responses_data
+host: 127.0.0.1
+port: 8100
+threads: 16                 # waitress worker threads
+abandon_after_min: 30       # monitoring: an unfinished session with no answer for this long shows as abandoned
+
+specs:
+  goemo_adm:
+    stimuli_name: goemotion_adm_gra_disg_disa
+    graph_name: b=6--emb=BAAI-bge-m3            # file name without .json
+    propose_fn: graph/dmcmcp
+    propose_params: {p_geom: 0.5, p_jump: 0.1, n_stuck: null}   # null = never
+    n_draw: 80                     # draws per chain
+    n_chain: 3                     # chains per session, one after the other
+    question: In which sentence do you think the speaker expresses admiration more than any other emotion?
+    n_attention: 4                 # per chain
+    attention_pass: 4              # per chain
+    completion_code: CU15BV60        # Prolific completion code shown at the end

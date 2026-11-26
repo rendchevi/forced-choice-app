@@ -1,0 +1,13 @@
+att_id,stimulus_A,stimulus_B,answer
+att01,"This is an attention check, follow the instruction in the right hand panel.",Choose the sentence in the left hand panel to pass this attention check.,A
+att02,Choose the sentence in the right hand panel to pass this attention check.,"This is an attention check, follow the instruction in the left hand panel.",B
+att03,"This is an attention check, please read the instruction carefully and choose this sentence in the left hand panel to pass.","This sentence is only here as a distractor, so please do not choose it in this attention check.",A
+att04,Please ignore this sentence and follow the instruction in the right hand panel to pass this attention check.,"To show that you are reading carefully, choose this sentence in the right hand panel for this attention check.",B
+att05,"To pass this attention check, you must choose this sentence in the left hand panel and ignore the other one.","Please do not select this sentence, because the correct answer to this attention check is in the left hand panel.",A
+att06,"This sentence is not the correct answer, so please read the instruction in the right hand panel to pass this attention check.","This is an attention check, and you will pass it only if you choose this sentence in the right hand panel.",B
+att07,"If you are reading this carefully, choose the sentence in the left hand panel to pass this attention check.",This sentence is only a filler and has nothing to do with the instruction given in the left hand panel.,A
+att08,"This sentence is only a filler, so please ignore it and choose the other sentence to pass this attention check.","We are checking whether you read the instructions, so please choose the sentence in this right hand panel to continue.",B
+att09,Ignore the task for this item and select this sentence in the left hand panel to show that you are paying attention.,"This sentence is the wrong answer for this attention check, so please follow the instruction in the left hand panel instead.",A
+att10,"Please follow the instruction in the right hand panel, since this sentence is not the one to choose in this attention check.",Ignore the task for this item and select this sentence in the right hand panel to show that you are paying attention.,B
+att11,"This is a quick check that you are still paying attention, so please choose this sentence in the left hand panel.","Do not choose this sentence in the right hand panel, because it is not the correct answer to this attention check.",A
+att12,"This sentence is not part of the answer, so choose the other sentence in the right hand panel to pass this attention check.","To continue with the study, please read this instruction carefully and select this sentence in the right hand panel.",B

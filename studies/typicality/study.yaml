@@ -3,7 +3,8 @@
 #   https://<host>/?PROLIFIC_PID={{%PROLIFIC_PID%}}&STUDY_ID={{%STUDY_ID%}}&SESSION_ID={{%SESSION_ID%}}
 # Test URL: /?sid=<user_id>--run=<k>   (user_id as in the chain study; k = repetition)
 study_id: dummy_emosent_binary--typicality-pilot
-stimuli_name: dummy_emosent_binary      # assets/stimuli/<stimuli_name>/{stimuli.csv, attention_checks_typicality.json}
+stimuli_name: dummy_emosent_binary      # assets/stimuli/<stimuli_name>/{stimuli.csv, attention_checks_typicality.csv}
+n_attention: 6                          # checks per session, spread evenly; reused evenly if the file has fewer
 assets_root: ../../assets/stimuli       # shared assets, relative to this folder
 question: How typical is this sentence of envy?
 min_value: 0
